@@ -71,22 +71,23 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "missing_telemetry" {
 }
 
 # Pipeline Health Dashboard (Azure Workbook)[cite: 1]
+resource "random_uuid" "workbook" {}
+
 resource "azurerm_application_insights_workbook" "pipeline_health" {
-  name                = uuid() # Requires a GUID for the name
+  name                = random_uuid.workbook.result
   resource_group_name = var.resource_group_name
   location            = var.location
   display_name        = "EMS1000 Pipeline Health (${var.env_prefix})"
-  source_id           = azurerm_log_analytics_workspace.law.id
-  
-  # Basic scaffolding for the 4 metrics to reconcile[cite: 1]
+  source_id           = lower(azurerm_log_analytics_workspace.law.id)
+
   data_json = jsonencode({
-    version = "Notebook/1.0",
+    version = "Notebook/1.0"
     items = [
       {
-        type = 1,
+        type = 1
         content = {
-          json = "## Pipeline Reconciliation\nCompare these counts to ensure no silent data drops.[cite: 1]"
-        },
+          json = "## Pipeline Reconciliation\nCompare these counts to ensure no silent data drops."
+        }
         name = "text - header"
       }
     ]
