@@ -38,4 +38,4 @@ module "storage" {
 # module "iothub" { ... }
 # module "function_app" { ... }
 # module "app_service" { ... }
- 
+
