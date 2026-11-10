@@ -1,0 +1,28 @@
+name: Scaffold Terraform Structure
+on:
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
+
+jobs:
+  build-structure:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create Structure
+        run: |
+          mkdir -p modules/{iothub,function_app,app_service,storage,observability}
+          mkdir -p environments
+          touch environments/staging.tfvars environments/prod.tfvars
+          touch main.tf variables.tf outputs.tf providers.tf backend.tf
+          for d in modules/*; do touch "$d/main.tf" "$d/variables.tf" "$d/outputs.tf"; done
+
+      - name: Commit and Push
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "chore: scaffold terraform directory structure via Actions"
+          git push
