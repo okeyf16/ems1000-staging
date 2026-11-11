@@ -61,4 +61,4 @@ module "function_app" {
   iothub_owner_key       = module.iothub.iothub_owner_primary_key
   tags                   = azurerm_resource_group.rg.tags
 }
-# module "app_service" { ... } 
+# module "app_service" { ... }
