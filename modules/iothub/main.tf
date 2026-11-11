@@ -5,19 +5,12 @@ resource "azurerm_iothub" "iothub" {
   tags                = var.tags
 
   sku {
-    name     = "F1" # Free tier for the pilot (8,000 messages/day)
+    name     = "F1" # Free tier for the pilot (8,000 messages/day)[cite: 1]
     capacity = 1
   }
 
-  # Ensure the built-in endpoint retains messages for at least 1 day[cite: 1]
-  endpoint {
-    type                       = "AzureIotHub.TelemetryV1"
-    connection_string          = "" # Built-in, left empty
-    name                       = "events"
-    batch_frequency_in_seconds = 60
-    max_chunk_size_in_bytes    = 10485760
-    encoding                   = "JSON"
-  }
+  # The built-in 'events' endpoint is generated automatically.
+  # Custom custom endpoint blocks are only needed if routing to external Blob/Service Bus.
 }
 
 # Stream IoT Hub platform logs to the central workspace[cite: 1]
