@@ -1,5 +1,6 @@
 name: Deploy FastAPI App Service
 on:
+  workflow_dispatch:
   push:
     branches: [ "main" ]
     paths: [ "src/api/**" ]
