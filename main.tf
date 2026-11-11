@@ -61,4 +61,18 @@ module "function_app" {
   iothub_owner_key       = module.iothub.iothub_owner_primary_key
   tags                   = azurerm_resource_group.rg.tags
 }
-# module "app_service" { ... } 
+# Phase 3: API Layer (FastAPI on Linux App Service F1)
+module "app_service" {
+  source                            = "./modules/app_service"
+  resource_group_name               = azurerm_resource_group.rg.name
+  location                          = azurerm_resource_group.rg.location
+  env_prefix                        = var.env_prefix
+  app_name                          = var.app_name
+  name_suffix                       = random_string.suffix.result
+  app_service_sku                   = "F1"
+  storage_primary_connection_string = module.storage.primary_connection_string
+  app_insights_connection_string    = module.observability.app_insights_connection_string
+  iothub_owner_key                  = module.iothub.iothub_owner_primary_key
+  log_analytics_workspace_id        = module.observability.log_analytics_workspace_id
+  tags                              = azurerm_resource_group.rg.tags
+}
