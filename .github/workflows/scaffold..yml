@@ -1,9 +1,9 @@
-name: Scaffold Terraform Structure
+name: Scaffold Monorepo Structure
 on:
-  workflow_dispatch: # Allows you to run this manually from the Actions tab
+  workflow_dispatch: # Run manually from GitHub Actions tab
 
 jobs:
-  build-structure:
+  reorganize-repo:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -11,18 +11,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Create Structure
+      - name: Create Directory Structure
         run: |
-          mkdir -p modules/{iothub,function_app,app_service,storage,observability}
-          mkdir -p environments
-          touch environments/staging.tfvars environments/prod.tfvars
-          touch main.tf variables.tf outputs.tf providers.tf backend.tf
-          for d in modules/*; do touch "$d/main.tf" "$d/variables.tf" "$d/outputs.tf"; done
+          # 1. Create target directories
+          mkdir -p infra/modules/{iothub,function_app,app_service,storage,observability}
+          mkdir -p infra/environments
+          mkdir -p src/function
+          mkdir -p src/api
 
-      - name: Commit and Push
+          # 2. Move existing Terraform files into infra/ (if present at root)
+          mv -f main.tf variables.tf outputs.tf providers.tf backend.tf infra/ 2>/dev/null || true
+          mv -f environments/* infra/environments/ 2>/dev/null || true
+          mv -f modules/* infra/modules/ 2>/dev/null || true
+
+          # Clean up old empty root modules directory if it exists
+          rm -rf modules environments
+
+          # 3. Create boilerplate placeholders for Azure Function
+          touch src/function/function_app.py
+          touch src/function/requirements.txt
+          touch src/function/host.json
+
+          # 4. Create boilerplate placeholders for FastAPI App Service
+          touch src/api/main.py
+          touch src/api/requirements.txt
+          touch src/api/Dockerfile
+
+      - name: Commit and Push Changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "chore: scaffold terraform directory structure via Actions"
+          git commit -m "refactor: migrate repo to monorepo layout (infra/ & src/)" || echo "No changes to commit"
           git push
