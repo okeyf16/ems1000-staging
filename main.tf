@@ -47,7 +47,7 @@ module "iothub" {
 module "function_app" {
   source                            = "./modules/function_app"
   resource_group_name               = azurerm_resource_group.rg.name
-  location                          = azurerm_resource_group.rg.location
+  location                          = "Sweden Central"
   env_prefix                        = var.env_prefix
   app_name                          = var.app_name
   storage_account_name              = module.storage.storage_account_name
