@@ -65,7 +65,7 @@ module "function_app" {
 module "app_service" {
   source                            = "./modules/app_service"
   resource_group_name               = azurerm_resource_group.rg.name
-  location                          = "West Europe"
+  location                          = "France Central"
   env_prefix                        = var.env_prefix
   app_name                          = var.app_name
   name_suffix                       = random_string.suffix.result
