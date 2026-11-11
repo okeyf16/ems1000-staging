@@ -1,0 +1,46 @@
+name: Deploy FastAPI App Service
+on:
+  push:
+    branches: [ "main" ]
+    paths: [ "src/api/**" ]
+
+env:
+  PYTHON_VERSION: '3.11'
+  WEBAPP_PATH: './src/api'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Build Python App
+        shell: bash
+        run: |
+          pushd '${{ env.WEBAPP_PATH }}'
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Azure App Service will automatically run uvicorn as defined in Terraform
+          popd
+
+      - name: Zip Deployment Artifact
+        shell: bash
+        run: |
+          cd ${{ env.WEBAPP_PATH }}
+          zip -r ../../api-release.zip ./*
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.WEB_APP_NAME }}
+          package: ./api-release.zip
