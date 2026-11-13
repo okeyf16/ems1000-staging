@@ -11,6 +11,21 @@ resource "azurerm_iothub" "iothub" {
 
   # The built-in 'events' endpoint is generated automatically.
   # Custom custom endpoint blocks are only needed if routing to external Blob/Service Bus.
+  # Routes are defined as standalone azurerm_iothub_route resources below: never add
+  # inline route/endpoint blocks here (changing those can force hub recreation).
+}
+
+# Send all device telemetry to the built-in Event Hub-compatible endpoint ('events'),
+# which the Function App's IoT Hub trigger reads.
+resource "azurerm_iothub_route" "telemetry_to_builtin" {
+  name                = "telemetry-to-builtin"
+  resource_group_name = var.resource_group_name
+  iothub_name         = azurerm_iothub.iothub.name
+
+  source         = "DeviceMessages"
+  condition      = "true"
+  endpoint_names = ["events"]
+  enabled        = true
 }
 
 # Stream IoT Hub platform logs to the central workspace[cite: 1]

@@ -1,5 +1,6 @@
 fastapi==0.104.1
 uvicorn==0.24.0.post1
+gunicorn==23.0.0
 azure-data-tables==12.4.2
 azure-iot-hub==2.7.0
 azure-monitor-opentelemetry==1.1.1

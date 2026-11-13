@@ -40,7 +40,9 @@ app = func.FunctionApp()
 
 @app.event_hub_message_trigger(
     arg_name="event",
-    event_hub_name="events", # The default IoT Hub built-in endpoint name
+    # Must equal the EntityPath inside the connection string: the IoT Hub's
+    # Event Hub-compatible name, injected by Terraform (not the literal "events").
+    event_hub_name="%IOTHUB_EVENTS_PATH%",
     connection="IOTHUB_EVENTS_CONNECTION_STRING"
 )
 def telemetry_ingest(event: func.EventHubEvent):
