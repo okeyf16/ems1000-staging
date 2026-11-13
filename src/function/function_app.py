@@ -4,7 +4,7 @@ import logging
 import datetime
 import uuid
 import azure.functions as func
-from azure.data.tables import TableServiceClient
+from azure.data.tables import TableServiceClient, EntityProperty, EdmType
 from azure.storage.blob import BlobServiceClient
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry import metrics
@@ -46,9 +46,44 @@ app = func.FunctionApp()
     connection="IOTHUB_EVENTS_CONNECTION_STRING"
 )
 def telemetry_ingest(event: func.EventHubEvent):
-    enqueued_time = event.enqueued_time
+    try:
+        _ingest(event)
+    except Exception:
+        # Unexpected failure outside the dead-letter path: log the full traceback so it
+        # shows in Log stream / App Insights, then fail the invocation.
+        logging.exception("telemetry_ingest failed unexpectedly")
+        raise
+
+
+_INT32_MIN, _INT32_MAX = -(2**31), 2**31 - 1
+_RESERVED_KEYS = {"PartitionKey", "RowKey", "Timestamp"}
+
+
+def _as_utc(dt):
+    """The worker may hand over enqueued_time without tzinfo; it is UTC (EnqueueTimeUtc)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.astimezone(datetime.timezone.utc)
+
+
+def _to_table_value(value):
+    """Map JSON values to Table Storage types. Ints beyond 32 bits (e.g. 'ts' in epoch ms)
+    must be sent as Edm.Int64; nested objects/arrays are stored as JSON strings."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not (_INT32_MIN <= value <= _INT32_MAX):
+        return EntityProperty(value, EdmType.INT64)
+    if isinstance(value, (dict, list)):
+        return json.dumps(value)
+    return value
+
+
+def _ingest(event: func.EventHubEvent):
+    enqueued_time = _as_utc(event.enqueued_time)
     now = datetime.datetime.now(datetime.timezone.utc)
-    
+
     # Calculate and record ingest latency[cite: 2]
     latency_ms = 0
     if enqueued_time:
@@ -56,8 +91,9 @@ def telemetry_ingest(event: func.EventHubEvent):
         latency_histogram.record(latency_ms)
 
     raw_body = event.get_body().decode('utf-8')
-    message_id = event.metadata.get("MessageId", str(uuid.uuid4()))
-    
+    trigger_metadata = event.metadata or {}
+    message_id = trigger_metadata.get("MessageId") or str(uuid.uuid4())
+
     logging.info(f"Processing message {message_id} with latency {latency_ms:.2f}ms")
 
     try:
@@ -65,14 +101,18 @@ def telemetry_ingest(event: func.EventHubEvent):
         payload = json.loads(raw_body)
         device_id = payload.get("id", "unknown_device")
 
-        # Upsert into DeviceState Table
+        # Upsert into DeviceState Table. 'Timestamp' is a reserved, service-managed
+        # property, so the enqueue time is stored as 'enqueued_time' instead.
         entity = {
-            "PartitionKey": device_id,
-            "RowKey": "latest",
-            "Timestamp": enqueued_time,
-            **payload
+            k: _to_table_value(v)
+            for k, v in payload.items()
+            if k not in _RESERVED_KEYS and v is not None
         }
-        
+        entity["PartitionKey"] = device_id
+        entity["RowKey"] = "latest"
+        if enqueued_time:
+            entity["enqueued_time"] = enqueued_time
+
         table_client.upsert_entity(entity=entity)
         logging.info(f"Successfully updated DeviceState for {device_id}")
 
