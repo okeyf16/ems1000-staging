@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ "main" ]
-    paths: [ "src/function/**" ]
+    paths: [ "src/function/**", ".github/workflows/deploy-function.yml" ]
 
 env:
   PYTHON_VERSION: '3.11'
@@ -25,7 +25,14 @@ jobs:
         run: |
           pushd '${{ env.FUNCTION_APP_PATH }}'
           python -m pip install --upgrade pip
-          pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+          # Build for the Azure Functions Linux image, not the runner: ubuntu-latest would
+          # pick wheels needing glibc 2.34+ (e.g. cryptography manylinux_2_34), which the
+          # Functions Python image can't load -> import error -> no functions indexed.
+          pip install -r requirements.txt --target=".python_packages/lib/site-packages" \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version ${{ env.PYTHON_VERSION }} \
+            --only-binary=:all:
           popd
 
       - name: Azure Login
