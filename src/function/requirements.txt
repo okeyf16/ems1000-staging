@@ -1,5 +1,7 @@
 azure-functions==1.17.0
-azure-data-tables==12.4.2
+azure-data-tables==12.7.0
 azure-storage-blob==12.19.0
 azure-monitor-opentelemetry==1.1.1
 opentelemetry-api==1.22.0
+six==1.17.0
+setuptools==75.8.0
