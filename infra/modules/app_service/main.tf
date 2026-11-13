@@ -20,7 +20,8 @@ resource "azurerm_linux_web_app" "web_app" {
     always_on         = var.app_service_sku != "F1"
     ftps_state        = "Disabled"
     health_check_path = "/healthz"
-    app_command_line  = "uvicorn main:app --host 0.0.0.0 --port 8000"
+    # Gunicorn managing Uvicorn workers: Microsoft's documented FastAPI startup on App Service
+    app_command_line = "gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 main:app"
 
     application_stack {
       python_version = "3.11"
