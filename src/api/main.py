@@ -2,7 +2,7 @@ import os
 import logging
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from azure.data.tables import TableServiceClient
+from azure.data.tables import TableServiceClient, EntityProperty
 from azure.iot.hub import IoTHubRegistryManager
 from azure.iot.hub.models import CloudToDeviceMethod
 from azure.monitor.opentelemetry import configure_azure_monitor
@@ -42,7 +42,9 @@ def get_device_state(device_id: str):
         # Assuming PartitionKey is the device_id and RowKey is fixed (e.g., "latest") 
         # or queried for the most recent entry.
         entity = table_client.get_entity(partition_key=device_id, row_key="latest")
-        return {"device_id": device_id, "state": entity}
+        # Int64 columns (e.g. 'ts' in epoch ms) come back as EntityProperty; return plain values.
+        state = {k: (v.value if isinstance(v, EntityProperty) else v) for k, v in entity.items()}
+        return {"device_id": device_id, "state": state}
     except Exception as e:
         logger.error(f"Failed to fetch state for {device_id}: {e}")
         raise HTTPException(status_code=404, detail="Device state not found.")
