@@ -36,4 +36,12 @@ resource "azurerm_linux_function_app" "function_app" {
     # event_hub_name="%IOTHUB_EVENTS_PATH%" so it always matches the EntityPath above
     "IOTHUB_EVENTS_PATH" = var.iothub_events_path
   }
+
+  lifecycle {
+    # Set by the deploy-function workflow (package URL); Terraform must not remove it,
+    # or the deployed code is unmounted until the next deploy.
+    ignore_changes = [
+      app_settings["WEBSITE_RUN_FROM_PACKAGE"],
+    ]
+  }
 }
