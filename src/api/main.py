@@ -1,7 +1,7 @@
 import os
 import logging
-from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import Body, FastAPI, HTTPException, Query
+from pydantic import BaseModel, Field
 from azure.data.tables import TableServiceClient, EntityProperty
 from azure.iot.hub import IoTHubRegistryManager
 from azure.iot.hub.models import CloudToDeviceMethod
@@ -38,8 +38,26 @@ def _plain(entity):
     """Int64 columns (e.g. 'ts' in epoch ms) come back as EntityProperty; return plain values."""
     return {k: (v.value if isinstance(v, EntityProperty) else v) for k, v in entity.items()}
 
+APP_COMMANDS = ["start", "stop", "reset_fault", "get_status"]
+
+
 class CommandPayload(BaseModel):
-    command: str  # "start", "stop", "reset_fault" or "get_status"
+    # Validated in the endpoint (unknown values -> 400), so the canonical method
+    # names stay accepted; the enum documents the app commands in /docs and OpenAPI.
+    command: str = Field(
+        ...,
+        description="start | stop | reset_fault | get_status",
+        json_schema_extra={"enum": APP_COMMANDS},
+    )
+
+
+# Selectable request bodies on the /docs test page ("Examples" dropdown)
+COMMAND_EXAMPLES = {
+    "start": {"summary": "Start the generator", "value": {"command": "start"}},
+    "stop": {"summary": "Stop the generator", "value": {"command": "stop"}},
+    "reset_fault": {"summary": "Clear a fault lockout", "value": {"command": "reset_fault"}},
+    "get_status": {"summary": "Live status from the device", "value": {"command": "get_status"}},
+}
 
 
 # App command -> device direct-method name (the EMS-1000 firmware contract).
@@ -90,7 +108,7 @@ def get_device_telemetry(device_id: str, limit: int = Query(20, ge=1, le=500)):
         raise HTTPException(status_code=500, detail="Could not read telemetry history.")
 
 @app.post("/api/devices/{device_id}/command")
-def send_device_command(device_id: str, payload: CommandPayload):
+def send_device_command(device_id: str, payload: CommandPayload = Body(..., openapi_examples=COMMAND_EXAMPLES)):
     """Invoke a Direct Method on the device.
 
     HTTP status mirrors the device's reply: 200 accepted, 400/409 refused (with the
