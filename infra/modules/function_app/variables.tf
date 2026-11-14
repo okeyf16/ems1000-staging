@@ -10,3 +10,6 @@ variable "iothub_events_endpoint" { type = string }
 variable "iothub_events_path" { type = string }
 variable "iothub_owner_key" { type = string }
 variable "tags" { type = map(string) }
+
+variable "history_table_name" { type = string }
+variable "history_retention_days" { type = number }

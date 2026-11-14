@@ -35,6 +35,10 @@ resource "azurerm_linux_function_app" "function_app" {
     # Event Hub-compatible name of the built-in endpoint; the trigger reads it as
     # event_hub_name="%IOTHUB_EVENTS_PATH%" so it always matches the EntityPath above
     "IOTHUB_EVENTS_PATH" = var.iothub_events_path
+
+    # Per-message history table and its retention (purged daily by history_purge)
+    "HISTORY_TABLE_NAME"     = var.history_table_name
+    "HISTORY_RETENTION_DAYS" = tostring(var.history_retention_days)
   }
 
   lifecycle {

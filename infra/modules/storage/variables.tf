@@ -18,3 +18,8 @@ variable "tags" {
   description = "Tags to apply to the resources."
   default     = {}
 }
+
+variable "archive_retention_days" {
+  type        = number
+  description = "Days to keep raw telemetry archive blobs before lifecycle deletion"
+}

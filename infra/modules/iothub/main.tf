@@ -55,3 +55,29 @@ resource "azurerm_monitor_diagnostic_setting" "iothub_diag" {
     enabled  = true
   }
 }
+
+# Raw archive: a storage-container endpoint plus a second route. The built-in route
+# above keeps feeding the Function; IoT Hub delivers each message to every matching route.
+resource "azurerm_iothub_endpoint_storage_container" "telemetry_archive" {
+  name                = "telemetry-archive"
+  resource_group_name = var.resource_group_name
+  iothub_id           = azurerm_iothub.iothub.id
+
+  connection_string          = var.archive_storage_connection_string
+  container_name             = var.archive_container_name
+  encoding                   = "JSON" # needs messages sent as application/json + utf-8 (the device does)
+  file_name_format           = "{iothub}/{partition}/{YYYY}/{MM}/{DD}/{HH}/{mm}"
+  batch_frequency_in_seconds = 300
+  max_chunk_size_in_bytes    = 314572800
+}
+
+resource "azurerm_iothub_route" "telemetry_to_archive" {
+  name                = "telemetry-to-archive"
+  resource_group_name = var.resource_group_name
+  iothub_name         = azurerm_iothub.iothub.name
+
+  source         = "DeviceMessages"
+  condition      = "true"
+  endpoint_names = [azurerm_iothub_endpoint_storage_container.telemetry_archive.name]
+  enabled        = true
+}
