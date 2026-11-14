@@ -107,15 +107,13 @@ def get_device_telemetry(device_id: str, limit: int = Query(20, ge=1, le=500)):
         logger.error(f"Failed to fetch telemetry history for {device_id}: {e}")
         raise HTTPException(status_code=500, detail="Could not read telemetry history.")
 
-@app.post("/api/devices/{device_id}/command")
-def send_device_command(device_id: str, payload: CommandPayload = Body(..., openapi_examples=COMMAND_EXAMPLES)):
-    """Invoke a Direct Method on the device.
+def _invoke_device_method(device_id: str, command: str) -> dict:
+    """Send one direct method and mirror the device's reply as HTTP.
 
-    HTTP status mirrors the device's reply: 200 accepted, 400/409 refused (with the
-    device's reason), 404 unknown method; 502 if the device itself errors and 504 if
-    it is offline or does not answer in time.
+    200 -> result; 400/404/409 refused (device reply in detail); 502 if the device
+    errors; 504 if it is offline or does not answer within 15 s.
     """
-    method_name = COMMAND_METHODS.get(payload.command)
+    method_name = COMMAND_METHODS.get(command)
     if method_name is None:
         raise HTTPException(status_code=400, detail="Invalid command. Must be one of: start, stop, reset_fault, get_status.")
 
@@ -127,17 +125,17 @@ def send_device_command(device_id: str, payload: CommandPayload = Body(..., open
             response_timeout_in_seconds=15,
             connect_timeout_in_seconds=15
         )
-        
+
         # Invoke the method synchronously on the device
         response = iot_registry_manager.invoke_device_method(device_id, method)
     except Exception as e:
-        logger.error(f"Failed to send command to {device_id}: {e}")
+        logger.error(f"Failed to send {command} to {device_id}: {e}")
         # 504 Gateway Timeout is used if the device is offline and misses the command window
         raise HTTPException(status_code=504, detail=f"Device unreachable or failed to respond: {str(e)}")
 
     result = {
         "device_id": device_id,
-        "command": payload.command,
+        "command": command,
         "method": method_name,
         "status": response.status,
         "payload": response.payload,
@@ -148,3 +146,26 @@ def send_device_command(device_id: str, payload: CommandPayload = Body(..., open
     if response.status is not None and response.status >= 500:
         raise HTTPException(status_code=502, detail=result)
     return result
+
+
+@app.post("/api/devices/{device_id}/command")
+def send_device_command(device_id: str, payload: CommandPayload = Body(..., openapi_examples=COMMAND_EXAMPLES)):
+    """Invoke a Direct Method on the device (start, stop, reset_fault, get_status).
+
+    HTTP status mirrors the device's reply: 200 accepted, 400/409 refused (with the
+    device's reason), 404 unknown method; 502 if the device itself errors and 504 if
+    it is offline or does not answer in time.
+    """
+    return _invoke_device_method(device_id, payload.command)
+
+
+@app.get("/api/devices/{device_id}/live")
+def get_device_live(device_id: str):
+    """Ask the device for its status right now (direct method get_status).
+
+    Unlike /state (the last stored report), this needs the device online and returns
+    504 if it is not. The reply comes from the device, not from storage.
+    """
+    result = _invoke_device_method(device_id, "get_status")
+    live = result["payload"] if isinstance(result["payload"], dict) else {"payload": result["payload"]}
+    return {"device_id": device_id, "source": "device", **live}
