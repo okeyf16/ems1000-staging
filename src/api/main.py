@@ -191,10 +191,9 @@ TWIN_EXAMPLES = {
     "thresholds": {"summary": "Alert thresholds", "value": {"low_fuel_warn_pct": 20, "overtemp_c": 100,
                                                             "min_start_battery_v": 11.5}},
     "fast": {"summary": "Model speed 60x", "value": {"speed": 60}},
-    "clear": {"summary": "Clear settings (back to device config)",
-              "value": {"telemetry_interval_s": None, "load_pct": None, "low_fuel_warn_pct": None,
-                        "overtemp_c": None, "min_start_battery_v": None, "speed": None}},
 }
+# No "clear" example: FastAPI drops null values from /docs examples, so it would
+# arrive as {}. Use DELETE .../twin/settings, or type {"load_pct": null} by hand.
 
 
 def _strip_metadata(value):
@@ -263,7 +262,8 @@ def get_device_twin(device_id: str):
 def update_device_twin(device_id: str, patch: dict = Body(..., openapi_examples=TWIN_EXAMPLES)):
     """Change desired settings: telemetry_interval_s (10-3600), load_pct (0-150),
     low_fuel_warn_pct (1-50), overtemp_c (85-120), min_start_battery_v (10-12.5),
-    speed (1-3600). null clears a setting. Only the settings sent are changed.
+    speed (1-3600). null clears a setting (or use DELETE .../twin/settings).
+    Only the settings sent are changed.
 
     400 for an unknown setting or out-of-range value. The device applies the change
     within seconds (or when it next connects); check GET .../twin, reported.settings
@@ -280,3 +280,26 @@ def update_device_twin(device_id: str, patch: dict = Body(..., openapi_examples=
             "connection_state": view["connection_state"],
             "desired": view["desired"],
             "note": "Check GET /twin: reported.settings_status shows whether the device applied each setting."}
+
+
+@app.delete("/api/devices/{device_id}/twin/settings")
+def clear_device_twin_settings(device_id: str, name: str | None = Query(
+        None, description="Clear only this setting; leave empty to clear all six")):
+    """Clear desired settings so the device goes back to its config values.
+
+    Without `name`: clears all six settings. With `name` (e.g. load_pct): clears just
+    that one. Same as PATCH with null values, which the /docs examples can't carry."""
+    if name is not None and name not in TWIN_SETTINGS:
+        raise HTTPException(status_code=400,
+                            detail={"invalid": {name: f"unknown setting; use one of {sorted(TWIN_SETTINGS)}"}})
+    patch = {name: None} if name else {key: None for key in TWIN_SETTINGS}
+    try:
+        twin = iot_registry_manager.update_twin(
+            device_id, Twin(properties=TwinProperties(desired=patch)), etag="*")
+    except Exception as e:
+        _twin_error(device_id, "update", e)
+    view = _twin_view(device_id, twin)
+    return {"device_id": device_id, "cleared": sorted(patch),
+            "desired_version": view["desired"].get("$version"),
+            "connection_state": view["connection_state"],
+            "desired": view["desired"]}
