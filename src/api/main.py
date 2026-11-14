@@ -39,7 +39,18 @@ def _plain(entity):
     return {k: (v.value if isinstance(v, EntityProperty) else v) for k, v in entity.items()}
 
 class CommandPayload(BaseModel):
-    command: str  # e.g., "start" or "stop"
+    command: str  # "start", "stop", "reset_fault" or "get_status"
+
+
+# App command -> device direct-method name (the EMS-1000 firmware contract).
+# The canonical method names are accepted too.
+COMMAND_METHODS = {
+    "start": "remote_start",
+    "stop": "remote_stop",
+    "reset_fault": "reset_fault",
+    "get_status": "get_status",
+}
+COMMAND_METHODS.update({m: m for m in list(COMMAND_METHODS.values())})
 
 @app.get("/healthz")
 def health_check():
@@ -80,14 +91,20 @@ def get_device_telemetry(device_id: str, limit: int = Query(20, ge=1, le=500)):
 
 @app.post("/api/devices/{device_id}/command")
 def send_device_command(device_id: str, payload: CommandPayload):
-    """Invoke a Direct Method on the IoT Hub to start or stop the generator."""
-    if payload.command not in ["start", "stop"]:
-        raise HTTPException(status_code=400, detail="Invalid command. Must be 'start' or 'stop'.")
+    """Invoke a Direct Method on the device.
+
+    HTTP status mirrors the device's reply: 200 accepted, 400/409 refused (with the
+    device's reason), 404 unknown method; 502 if the device itself errors and 504 if
+    it is offline or does not answer in time.
+    """
+    method_name = COMMAND_METHODS.get(payload.command)
+    if method_name is None:
+        raise HTTPException(status_code=400, detail="Invalid command. Must be one of: start, stop, reset_fault, get_status.")
 
     try:
         # Construct the Direct Method call
         method = CloudToDeviceMethod(
-            method_name=payload.command,
+            method_name=method_name,
             payload={"command_id": os.urandom(4).hex()}, # Traceable command ID
             response_timeout_in_seconds=15,
             connect_timeout_in_seconds=15
@@ -95,14 +112,21 @@ def send_device_command(device_id: str, payload: CommandPayload):
         
         # Invoke the method synchronously on the device
         response = iot_registry_manager.invoke_device_method(device_id, method)
-        
-        return {
-            "device_id": device_id,
-            "command": payload.command,
-            "status": response.status,
-            "payload": response.payload
-        }
     except Exception as e:
         logger.error(f"Failed to send command to {device_id}: {e}")
         # 504 Gateway Timeout is used if the device is offline and misses the command window
         raise HTTPException(status_code=504, detail=f"Device unreachable or failed to respond: {str(e)}")
+
+    result = {
+        "device_id": device_id,
+        "command": payload.command,
+        "method": method_name,
+        "status": response.status,
+        "payload": response.payload,
+    }
+    # Mirror the device's refusal so the app can show the reason (e.g. 409 low oil)
+    if response.status is not None and 400 <= response.status < 500:
+        raise HTTPException(status_code=response.status, detail=result)
+    if response.status is not None and response.status >= 500:
+        raise HTTPException(status_code=502, detail=result)
+    return result
