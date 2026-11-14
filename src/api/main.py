@@ -4,7 +4,7 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from azure.data.tables import TableServiceClient, EntityProperty
 from azure.iot.hub import IoTHubRegistryManager
-from azure.iot.hub.models import CloudToDeviceMethod
+from azure.iot.hub.models import CloudToDeviceMethod, Twin, TwinProperties
 from azure.monitor.opentelemetry import configure_azure_monitor
 
 # 1. Configure OpenTelemetry for Application Insights
@@ -169,3 +169,114 @@ def get_device_live(device_id: str):
     result = _invoke_device_method(device_id, "get_status")
     live = result["payload"] if isinstance(result["payload"], dict) else {"payload": result["payload"]}
     return {"device_id": device_id, "source": "device", **live}
+
+
+# ---- Device twin (M5) ---------------------------------------------------------------
+# Remotely changeable settings and their allowed ranges. The device validates them too
+# and reports "applied" or "rejected: <reason>" for each in reported.settings_status.
+TWIN_SETTINGS = {
+    "telemetry_interval_s": (10, 3600, True),
+    "load_pct": (0, 150, False),
+    "low_fuel_warn_pct": (1, 50, False),
+    "overtemp_c": (85, 120, False),
+    "min_start_battery_v": (10.0, 12.5, False),
+    "speed": (1, 3600, False),
+}
+
+TWIN_EXAMPLES = {
+    "demo_interval": {"summary": "Telemetry every 10 s (demo)", "value": {"telemetry_interval_s": 10}},
+    "normal_interval": {"summary": "Telemetry every 60 s (normal)", "value": {"telemetry_interval_s": 60}},
+    "load": {"summary": "Set load to 60 %", "value": {"load_pct": 60}},
+    "overload": {"summary": "Overload: 110 % (breaker trips after 5 s)", "value": {"load_pct": 110}},
+    "thresholds": {"summary": "Alert thresholds", "value": {"low_fuel_warn_pct": 20, "overtemp_c": 100,
+                                                            "min_start_battery_v": 11.5}},
+    "fast": {"summary": "Model speed 60x", "value": {"speed": 60}},
+    "clear": {"summary": "Clear settings (back to device config)",
+              "value": {"telemetry_interval_s": None, "load_pct": None, "low_fuel_warn_pct": None,
+                        "overtemp_c": None, "min_start_battery_v": None, "speed": None}},
+}
+
+
+def _strip_metadata(value):
+    """Drop IoT Hub's $metadata blocks; keep $version."""
+    if isinstance(value, dict):
+        return {k: _strip_metadata(v) for k, v in value.items() if k != "$metadata"}
+    return value
+
+
+def _validate_twin_patch(patch) -> dict:
+    if not isinstance(patch, dict) or not patch:
+        raise HTTPException(status_code=400, detail="Body must be a JSON object with at least one setting.")
+    errors = {}
+    for key, value in patch.items():
+        if key not in TWIN_SETTINGS:
+            errors[key] = f"unknown setting; use one of {sorted(TWIN_SETTINGS)}"
+            continue
+        if value is None:
+            continue  # null clears the setting (device goes back to its config value)
+        low, high, integer = TWIN_SETTINGS[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            errors[key] = "must be a number or null"
+        elif integer and float(value) != int(value):
+            errors[key] = "must be a whole number"
+        elif not low <= value <= high:
+            errors[key] = f"must be between {low:g} and {high:g}"
+    if errors:
+        raise HTTPException(status_code=400, detail={"invalid": errors})
+    return patch
+
+
+def _twin_error(device_id: str, action: str, e: Exception):
+    status = getattr(getattr(e, "response", None), "status_code", None)
+    if status == 404:
+        raise HTTPException(status_code=404, detail=f"Device {device_id} not found in IoT Hub.")
+    logger.error(f"Failed to {action} twin for {device_id}: {e}")
+    raise HTTPException(status_code=502, detail=f"IoT Hub twin {action} failed: {e}")
+
+
+def _twin_view(device_id: str, twin) -> dict:
+    props = twin.properties
+    desired = _strip_metadata(dict(props.desired or {})) if props else {}
+    reported = _strip_metadata(dict(props.reported or {})) if props else {}
+    return {
+        "device_id": device_id,
+        "connection_state": twin.connection_state,
+        "last_activity_time": twin.last_activity_time.isoformat() if twin.last_activity_time else None,
+        "desired": desired,
+        "reported": reported,
+    }
+
+
+@app.get("/api/devices/{device_id}/twin")
+def get_device_twin(device_id: str):
+    """Device twin: desired settings, what the device reports (state, last fault,
+    settings in use and whether each desired setting was applied), and whether it is
+    connected. Works while the device is offline (last reported values)."""
+    try:
+        twin = iot_registry_manager.get_twin(device_id)
+    except Exception as e:
+        _twin_error(device_id, "read", e)
+    return _twin_view(device_id, twin)
+
+
+@app.patch("/api/devices/{device_id}/twin")
+def update_device_twin(device_id: str, patch: dict = Body(..., openapi_examples=TWIN_EXAMPLES)):
+    """Change desired settings: telemetry_interval_s (10-3600), load_pct (0-150),
+    low_fuel_warn_pct (1-50), overtemp_c (85-120), min_start_battery_v (10-12.5),
+    speed (1-3600). null clears a setting. Only the settings sent are changed.
+
+    400 for an unknown setting or out-of-range value. The device applies the change
+    within seconds (or when it next connects); check GET .../twin, reported.settings
+    and reported.settings_status, to confirm."""
+    patch = _validate_twin_patch(patch)
+    try:
+        twin = iot_registry_manager.update_twin(
+            device_id, Twin(properties=TwinProperties(desired=patch)), etag="*")
+    except Exception as e:
+        _twin_error(device_id, "update", e)
+    view = _twin_view(device_id, twin)
+    return {"device_id": device_id, "sent": patch,
+            "desired_version": view["desired"].get("$version"),
+            "connection_state": view["connection_state"],
+            "desired": view["desired"],
+            "note": "Check GET /twin: reported.settings_status shows whether the device applied each setting."}
