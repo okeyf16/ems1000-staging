@@ -33,6 +33,7 @@ resource "azurerm_linux_web_app" "web_app" {
     "APPLICATIONINSIGHTS_CONNECTION_STRING" = var.app_insights_connection_string
     "OTEL_SERVICE_NAME"                     = "ems-api"
     "STORAGE_CONN_STR"                      = var.storage_primary_connection_string
+    "HISTORY_TABLE_NAME"                    = var.history_table_name
     "IOTHUB_CONNECTION_STRING"              = "HostName=iot-${var.app_name}-${var.env_prefix}.azure-devices.net;SharedAccessKeyName=iothubowner;SharedAccessKey=${var.iothub_owner_key}"
   }
 }

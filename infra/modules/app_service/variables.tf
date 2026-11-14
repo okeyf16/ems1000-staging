@@ -57,3 +57,8 @@ variable "tags" {
   description = "Resource tags."
   default     = {}
 }
+
+variable "history_table_name" {
+  type        = string
+  description = "Table holding per-message telemetry history"
+}

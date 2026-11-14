@@ -24,12 +24,13 @@ module "observability" {
 
 # Phase 1: Storage Layer
 module "storage" {
-  source               = "./modules/storage"
-  resource_group_name  = azurerm_resource_group.rg.name
-  location             = azurerm_resource_group.rg.location
+  source                 = "./modules/storage"
+  resource_group_name    = azurerm_resource_group.rg.name
+  location               = azurerm_resource_group.rg.location
   # Storage accounts allow 3-24 lowercase alphanumeric characters only
-  storage_account_name = "st${var.app_name}${var.env_prefix}${random_string.suffix.result}"
-  tags                 = azurerm_resource_group.rg.tags
+  storage_account_name   = "st${var.app_name}${var.env_prefix}${random_string.suffix.result}"
+  archive_retention_days = var.archive_retention_days
+  tags                   = azurerm_resource_group.rg.tags
 }
 
 # Phase 2: Ingestion Layer
@@ -41,6 +42,10 @@ module "iothub" {
   app_name                   = var.app_name
   log_analytics_workspace_id = module.observability.log_analytics_workspace_id
   tags                       = azurerm_resource_group.rg.tags
+
+  # Raw telemetry archive endpoint (blob container in the storage account)
+  archive_storage_connection_string = module.storage.primary_connection_string
+  archive_container_name            = module.storage.telemetry_archive_container_name
 }
 
 # Phase 3: Compute Layer (Serverless Function)
@@ -60,6 +65,10 @@ module "function_app" {
   iothub_events_path     = module.iothub.eventhub_compatible_path
   iothub_owner_key       = module.iothub.iothub_owner_primary_key
   tags                   = azurerm_resource_group.rg.tags
+
+  # Per-message telemetry history
+  history_table_name     = module.storage.telemetry_table_name
+  history_retention_days = var.history_retention_days
 }
 # Phase 3: API Layer (FastAPI on Linux App Service F1)
 module "app_service" {
@@ -75,4 +84,5 @@ module "app_service" {
   iothub_owner_key                  = module.iothub.iothub_owner_primary_key
   log_analytics_workspace_id        = module.observability.log_analytics_workspace_id
   tags                              = azurerm_resource_group.rg.tags
+  history_table_name                = module.storage.telemetry_table_name
 }

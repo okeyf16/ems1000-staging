@@ -1,6 +1,6 @@
 import os
 import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from azure.data.tables import TableServiceClient, EntityProperty
 from azure.iot.hub import IoTHubRegistryManager
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 STORAGE_CONN_STR = os.getenv("STORAGE_CONN_STR")
 IOTHUB_CONN_STR = os.getenv("IOTHUB_CONNECTION_STRING")
 TABLE_NAME = "DeviceState"
+HISTORY_TABLE_NAME = os.getenv("HISTORY_TABLE_NAME", "DeviceTelemetry")
 
 # Initialize Azure Clients
 try:
@@ -26,6 +27,16 @@ try:
     iot_registry_manager = IoTHubRegistryManager(IOTHUB_CONN_STR)
 except Exception as e:
     logger.error(f"Failed to initialize Azure clients: {e}")
+
+try:
+    history_client = TableServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR).get_table_client(table_name=HISTORY_TABLE_NAME)
+except Exception as e:
+    logger.error(f"Failed to initialize history table client: {e}")
+
+
+def _plain(entity):
+    """Int64 columns (e.g. 'ts' in epoch ms) come back as EntityProperty; return plain values."""
+    return {k: (v.value if isinstance(v, EntityProperty) else v) for k, v in entity.items()}
 
 class CommandPayload(BaseModel):
     command: str  # e.g., "start" or "stop"
@@ -42,12 +53,30 @@ def get_device_state(device_id: str):
         # Assuming PartitionKey is the device_id and RowKey is fixed (e.g., "latest") 
         # or queried for the most recent entry.
         entity = table_client.get_entity(partition_key=device_id, row_key="latest")
-        # Int64 columns (e.g. 'ts' in epoch ms) come back as EntityProperty; return plain values.
-        state = {k: (v.value if isinstance(v, EntityProperty) else v) for k, v in entity.items()}
-        return {"device_id": device_id, "state": state}
+        return {"device_id": device_id, "state": _plain(entity)}
     except Exception as e:
         logger.error(f"Failed to fetch state for {device_id}: {e}")
         raise HTTPException(status_code=404, detail="Device state not found.")
+
+@app.get("/api/devices/{device_id}/telemetry")
+def get_device_telemetry(device_id: str, limit: int = Query(20, ge=1, le=500)):
+    """Return the device's most recent telemetry messages, newest first."""
+    try:
+        # RowKeys are reversed timestamps, so the table already returns newest first
+        pages = history_client.query_entities(
+            query_filter="PartitionKey eq @pk",
+            parameters={"pk": device_id},
+            results_per_page=limit,
+        )
+        items = []
+        for entity in pages:
+            items.append(_plain(entity))
+            if len(items) >= limit:
+                break
+        return {"device_id": device_id, "count": len(items), "items": items}
+    except Exception as e:
+        logger.error(f"Failed to fetch telemetry history for {device_id}: {e}")
+        raise HTTPException(status_code=500, detail="Could not read telemetry history.")
 
 @app.post("/api/devices/{device_id}/command")
 def send_device_command(device_id: str, payload: CommandPayload):

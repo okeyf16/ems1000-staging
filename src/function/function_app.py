@@ -28,11 +28,15 @@ latency_histogram = meter.create_histogram(
 STORAGE_CONN_STR = os.getenv("AzureWebJobsStorage")
 TABLE_NAME = "DeviceState"
 DEAD_LETTER_CONTAINER = "dead-letter"
+# Per-message history (one row per message, newest first); purged daily by history_purge
+HISTORY_TABLE_NAME = os.getenv("HISTORY_TABLE_NAME", "DeviceTelemetry")
+HISTORY_RETENTION_DAYS = int(os.getenv("HISTORY_RETENTION_DAYS", "9"))
 
 try:
     table_client = TableServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR).get_table_client(table_name=TABLE_NAME)
     blob_service_client = BlobServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR)
     dead_letter_client = blob_service_client.get_container_client(DEAD_LETTER_CONTAINER)
+    history_client = TableServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR).get_table_client(table_name=HISTORY_TABLE_NAME)
 except Exception as e:
     logging.error(f"Failed to initialize Azure Storage clients: {e}")
 
@@ -80,6 +84,25 @@ def _to_table_value(value):
     return value
 
 
+# Reversed-time RowKeys sort newest first. 13 digits of epoch ms covers dates up to year 2286.
+_MAX_EPOCH_MS = 9_999_999_999_999
+
+
+def _reversed_ms(dt):
+    return _MAX_EPOCH_MS - int(dt.timestamp() * 1000)
+
+
+def _history_row_key(enqueued_time, payload, message_id):
+    """<reversed enqueue ms>_<boot>_<seq>: newest first, unique per message, and the same
+    for a redelivered message (so an upsert never creates a duplicate row)."""
+    boot, seq = payload.get("boot"), payload.get("seq")
+    if isinstance(boot, int) and isinstance(seq, int) and not isinstance(boot, bool) and not isinstance(seq, bool):
+        suffix = f"{boot:06d}_{seq:08d}"
+    else:
+        suffix = message_id
+    return f"{_reversed_ms(enqueued_time):013d}_{suffix}"
+
+
 def _ingest(event: func.EventHubEvent):
     enqueued_time = _as_utc(event.enqueued_time)
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -116,6 +139,14 @@ def _ingest(event: func.EventHubEvent):
         table_client.upsert_entity(entity=entity)
         logging.info(f"Successfully updated DeviceState for {device_id}")
 
+        # Append to the history table: same fields, one row per message
+        history_time = enqueued_time or now
+        history_entity = dict(entity)
+        history_entity["RowKey"] = _history_row_key(history_time, payload, message_id)
+        history_entity["enqueued_time"] = history_time
+        history_client.upsert_entity(entity=history_entity)
+        logging.info(f"Added history row {history_entity['RowKey']} for {device_id}")
+
     except Exception as e:
         logging.error(f"Failed to process telemetry payload. Sending to dead-letter blob. Error: {e}")
         
@@ -143,6 +174,32 @@ try:
     table_client = TableServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR).get_table_client(table_name=TABLE_NAME)
 except Exception as e:
     logging.error(f"Failed to initialize Table client for Event Grid: {e}")
+
+#########History retention#######
+@app.timer_trigger(schedule="0 15 1 * * *", arg_name="timer", run_on_startup=False, use_monitor=True)
+def history_purge(timer: func.TimerRequest):
+    """Daily at 01:15 UTC: delete DeviceTelemetry rows older than HISTORY_RETENTION_DAYS."""
+    try:
+        cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=HISTORY_RETENTION_DAYS)
+        # Older rows have LARGER reversed-time keys, so everything past the cutoff key goes
+        query_filter = f"RowKey gt '{_reversed_ms(cutoff):013d}'"
+        by_partition = {}
+        for row in history_client.query_entities(query_filter=query_filter, select=["PartitionKey", "RowKey"]):
+            by_partition.setdefault(row["PartitionKey"], []).append(row["RowKey"])
+
+        deleted = 0
+        for partition, row_keys in by_partition.items():
+            # A table transaction holds at most 100 operations, all in one partition
+            for i in range(0, len(row_keys), 100):
+                batch = [("delete", {"PartitionKey": partition, "RowKey": rk}) for rk in row_keys[i:i + 100]]
+                history_client.submit_transaction(batch)
+                deleted += len(batch)
+        logging.info(f"history_purge: deleted {deleted} rows older than {cutoff.isoformat()} "
+                     f"({HISTORY_RETENTION_DAYS} days) across {len(by_partition)} device(s)")
+    except Exception:
+        logging.exception("history_purge failed")
+        raise
+
 
 @app.event_grid_trigger(arg_name="event")
 def device_lifecycle_trigger(event: func.EventGridEvent):

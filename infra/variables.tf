@@ -28,3 +28,15 @@ variable "tags" {
     Project = "EMS1000"
   }
 }
+
+variable "history_retention_days" {
+  type        = number
+  default     = 9
+  description = "Days of per-message history kept in the DeviceTelemetry table"
+}
+
+variable "archive_retention_days" {
+  type        = number
+  default     = 30
+  description = "Days raw telemetry archive blobs are kept before lifecycle deletion"
+}
