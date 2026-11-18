@@ -59,6 +59,18 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 | S-31 | History purge runs | Function App → `history_purge` → **Code + Test** → **Test/Run**, or check the run after 01:15 UTC | Succeeds; log line "history_purge: deleted N rows…" |
 | S-32 | Archive lifecycle rule | Storage account → **Lifecycle management** | Rule `telemetry-archive-expiry`, delete after 30 days |
 
+## Tester access (after adding someone to `testers.auto.tfvars`)
+
+Run by the tester, signed in with their guest account.
+
+| ID | Check | How | Expected |
+|---|---|---|---|
+| S-40 | Can see the hub | Portal → the hub → **Devices** | Device list loads (portal uses their Entra account, not keys) |
+| S-41 | Can create a device | **Add device** `ems-<name>-01` | Created |
+| S-42 | Can set a twin and call a method | Device → **Device twin** edit desired; **Direct method** `get_status` (device online) | Saved; method returns (or 504-style timeout if offline) |
+| S-43 | Can't delete | Select their device → **Delete** | Refused: authorization failed (403) |
+| S-44 | Can't see keys | Hub → **Shared access policies** | Keys not shown / access denied |
+
 ## Command line alternative
 
 The same checks without the portal (needs `az login` and the `azure-iot` extension):

@@ -21,3 +21,7 @@ output "iothub_owner_primary_key" {
   value     = data.azurerm_iothub_shared_access_policy.iothubowner.primary_key
   sensitive = true
 }
+
+output "iothub_name" {
+  value = azurerm_iothub.iothub.name
+}
