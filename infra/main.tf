@@ -90,6 +90,15 @@ module "app_service" {
   history_table_name                = module.storage.telemetry_table_name
   alerts_table_name                 = module.storage.alerts_table_name
   alert_webhook_token               = random_password.alert_webhook_token.result
+  api_keys                          = [random_password.api_key["primary"].result, random_password.api_key["secondary"].result]
+}
+
+# API keys for the X-API-Key header. Two, so one can be replaced while clients use the other:
+# HCP Terraform -> new run -> replace random_password.api_key["secondary"], move clients, then primary.
+resource "random_password" "api_key" {
+  for_each = toset(["primary", "secondary"])
+  length   = 40
+  special  = false
 }
 
 # Alerts reach the simulator panel (and later the mobile app) through the API:

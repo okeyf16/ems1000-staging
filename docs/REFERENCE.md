@@ -8,19 +8,84 @@ replies, twin settings), see the
 ## API
 
 FastAPI on App Service. Interactive docs and a test page are at `<api-base-url>/docs` (the base
-URL is the Terraform output `api_base_url`). There is no authentication yet
-([known issue 2](RUNBOOK.md#known-issues)).
+URL is the Terraform output `api_base_url`).
+
+**API key.** Every endpoint except `/healthz` needs a key in the `X-API-Key` header; on `/docs`,
+select **Authorize** and paste it. Two keys are valid at once (Terraform output `api_keys`:
+`primary`, `secondary`), so either can be replaced without downtime ([runbook](RUNBOOK.md#rotating-keys)).
+Missing or wrong key: **401**. No keys configured on the server: **503**.
+
+**Times are WAT** (West Africa Time, UTC+1, no daylight saving) in every reply, written with
+their offset, e.g. `2026-11-18T23:10:05+01:00`. Storage, logs and the Azure portal stay in UTC:
+add one hour to compare. Day boundaries for daily figures use midnight WAT (23:00 UTC).
 
 | Method | Path | Returns | Reads from |
 |---|---|---|---|
-| GET | `/healthz` | `{"status":"healthy"}`; App Service's health probe | — |
-| GET | `/api/devices/{id}/state` | The last message received from the device | Table `DeviceState` |
-| GET | `/api/devices/{id}/telemetry?limit=N` | The last N messages, newest first (N 1–500, default 20) | Table `DeviceTelemetry` |
+| GET | `/healthz` | `{"status":"healthy"}`; App Service's health probe. No key | — |
+| GET | `/api/devices/{id}/state` | The last stored status, in the [state shape](#state-reply) | Table `DeviceState` (free, works offline) |
+| GET | `/api/devices/{id}/state?live=true` | The device's status right now, same shape | IoT Hub `get_status` (uses the message budget; 504 if offline) |
+| GET | `/api/devices/{id}/live` | **Deprecated** alias of `state?live=true` | IoT Hub |
+| GET | `/api/devices/{id}/telemetry?limit=N` | The last N messages as sent, newest first (N 1–500, default 20), plus `received_at` and `device_time` in WAT | Table `DeviceTelemetry` |
 | POST | `/api/devices/{id}/command` | Sends a direct method and mirrors the device's reply | IoT Hub (device must be online) |
-| GET | `/api/devices/{id}/live` | The device's status right now (`get_status`) | IoT Hub (device must be online) |
 | GET | `/api/devices/{id}/twin` | Desired settings, reported properties, connection state | IoT Hub twin (works while offline) |
 | PATCH | `/api/devices/{id}/twin` | Changes desired settings (only those sent) | IoT Hub twin |
 | DELETE | `/api/devices/{id}/twin/settings[?name=…]` | Clears all six settings, or one, so the device returns to its config values | IoT Hub twin |
+| GET | `/api/alerts[?device_id=&status=active\|all&limit=]` | Alerts, newest first ([alerts](#alerts)) | Table `Alerts` |
+| POST | `/api/alerts/azure-monitor?token=…` | Webhook for Azure Monitor; not for clients, hidden from `/docs` | Writes `Alerts` |
+
+### State reply
+
+`/state` and `/state?live=true` return the same shape; `source` says which.
+
+```json
+{
+  "device_id": "ems-sim-01",
+  "source": "stored",
+  "received_at": "2026-11-18T23:10:05+01:00",
+  "age_s": 42,
+  "readings": {
+    "v": 229.8, "i": 6.8, "f": 50.4, "fuel": 64.0, "oil": 0, "oil_state": "ok",
+    "t": 71.5, "vb": 12.45, "soc_pct": 82, "soc_reliable": false, "load_pct": 50.0
+  },
+  "status": { "run": 2, "run_state": "Running", "flt": 0, "faults": [], "warnings": [] },
+  "link": { "rssi": -71, "boot": 7, "seq": 120, "sv": 1, "ts": 1795030205000,
+            "device_time": "2026-11-18T23:10:05+01:00" }
+}
+```
+
+| Group | Field | Meaning |
+|---|---|---|
+| top | `source` | `stored` (last message in the table) or `device` (asked live) |
+| top | `received_at`, `age_s` | When the cloud received it (WAT) and how many seconds ago; live replies are 0 s old |
+| readings | `v`, `i`, `f`, `fuel`, `t`, `vb` | Volts, amps, hertz, fuel %, engine temperature °C, starter battery volts, as sent |
+| readings | `oil`, `oil_state` | Oil switch: 0 `ok`, 1 `low`, 2 `critical` (a float switch, not a measured level) |
+| readings | `soc_pct` | Battery state of charge, **estimated** from `vb` on a 12 V lead-acid curve (11.8 V = 0 %, 12.2 V = 50 %, 12.7 V = 100 %) |
+| readings | `soc_reliable` | `true` only with the engine off (`run` 0 or 4); cranking or charging skews the voltage |
+| readings | `load_pct` | `i` as a percentage of rated current (`RATED_CURRENT_A`, default 13.6 A = 3.0 kVA at 220 V) |
+| status | `run`, `run_state` | 0 Off, 1 Cranking, 2 Running, 3 Stopping, 4 Fault |
+| status | `flt`, `faults`, `warnings` | The fault bitmask and its decoded names (see [the four non-reading fields](#the-four-non-reading-fields)) |
+| link | `rssi`, `boot`, `seq`, `sv`, `ts`, `device_time` | Connection and message bookkeeping; `device_time` is `ts` in WAT. A live reply only has what the device reports |
+
+### The four non-reading fields
+
+Telemetry carries four fields that aren't gauges but matter to the cloud:
+
+| Field | What it is | Values | Why the cloud needs it |
+|---|---|---|---|
+| `sv` | Schema version of the message | `1` today | Lets the cloud read old and new devices side by side when telemetry v2 arrives (predictive-maintenance summaries). Without it a format change breaks every deployed unit |
+| `flt` | Fault and warning bitmask | Bits 0–3 latched faults: 0 low oil, 1 low fuel, 2 over-temperature, 3 low battery. Bits 4–5 warnings: 4 voltage, 5 frequency out of range. `0` = all clear | Drives the start pre-check, fault lockout, alerts, the "why won't it start?" card and the panel lamps. The API decodes it into `faults` and `warnings` |
+| `boot` | Restart counter, +1 each power-up (kept in flash) | 1, 2, 3, … | With `seq` it makes every message unique, which is how history avoids duplicates; a `seq` gap within one boot means lost messages; frequent boots point to power or brown-out problems |
+| `rssi` | Mobile signal strength, dBm | About −50 (excellent) to −110 (unusable); below about −100 expect drop-outs | Explains why a unit goes offline, warns before it goes silent, and helps choose where to mount it |
+
+`seq` (message counter, restarts at 1 each boot) and `ts` (device clock, epoch milliseconds, UTC)
+complete the set.
+
+### Alerts
+
+`GET /api/alerts` returns `{"count", "alerts": [...]}`, newest first. Each alert:
+`id`, `device_id` (`null` for pipeline-wide alerts such as latency), `rule`, `severity`
+(`Sev0`–`Sev4`), `status` (`active` or `resolved`), `description`, `source`, `fired_at`,
+`resolved_at` (WAT). `status=active` lists only alerts still firing.
 
 ### Commands
 
@@ -88,8 +153,13 @@ message, so a retry overwrites rather than duplicates. `history_purge` deletes r
 
 ### Table `Alerts`: alerts for the panel and the app
 
-Created by Terraform. The API writes a row for each Azure Monitor alert it receives through its
-webhook, and serves them at `GET /api/alerts` (both arrive with the API change that follows).
+| Key | Value |
+|---|---|
+| PartitionKey | Device ID from the alert's `device_id` dimension, or `_system` |
+| RowKey | The Azure Monitor alert ID (last path segment), so "Resolved" updates the row "Fired" created |
+| Columns | `rule`, `severity`, `condition` (`Fired`/`Resolved`), `fired_at`, `resolved_at` (UTC), `description`, `signal_type`, `source`, `alert_id` |
+
+Written by the webhook (token in `ALERT_WEBHOOK_TOKEN`); read by `GET /api/alerts`.
 Predictive-maintenance alerts will be written here too.
 
 ### Blob containers
@@ -133,10 +203,10 @@ in the repo.
 |---|---|
 | `IOTHUB_EVENTS_CONNECTION_STRING` | Event Hub-compatible connection string for the hub's built-in endpoint |
 | `IOTHUB_EVENTS_PATH` | Event Hub-compatible name; must equal the `EntityPath` in the string above |
-| `AzureWebJobsStorage` | Storage account connection string (tables and dead-letter) |
+| `AzureWebJobsStorage` | Storage account connection string (tables and dead-letter); set by the provider from the storage account name and key |
 | `HISTORY_TABLE_NAME`, `HISTORY_RETENTION_DAYS` | `DeviceTelemetry`, `9` |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | App Insights |
-| `WEBSITE_RUN_FROM_PACKAGE` | Set by the deploy workflow; Terraform ignores it |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | App Insights; set through `site_config` |
+| `WEBSITE_RUN_FROM_PACKAGE`, `WEBSITE_ENABLE_SYNC_UPDATE_SITE` | Set by the deploy workflow; Terraform ignores them |
 
 **Web App (API)**
 
@@ -147,6 +217,8 @@ in the repo.
 | `HISTORY_TABLE_NAME` | `DeviceTelemetry` |
 | `ALERTS_TABLE_NAME` | `Alerts` |
 | `ALERT_WEBHOOK_TOKEN` | Secret the action group sends in the webhook URL (`?token=…`); generated by Terraform |
+| `API_KEYS` | The two API keys, comma-separated; generated by Terraform |
+| `RATED_CURRENT_A` | Optional; rated current for `load_pct` (default 13.6) |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING`, `OTEL_SERVICE_NAME` | App Insights; service name `ems-api` |
 | `SCM_DO_BUILD_DURING_DEPLOYMENT` | `true` (App Service installs `requirements.txt`) |
 

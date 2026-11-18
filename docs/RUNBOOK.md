@@ -121,6 +121,7 @@ assignments too).
 | `iothubowner` (used by the Function and the API) | IoT Hub → **Shared access policies** → `iothubowner` → regenerate the primary key | Run an HCP Terraform plan and apply: it rewrites both apps' settings from the new key |
 | Storage account key | Storage account → **Access keys** → rotate key 1 | Plan and apply, as above |
 | Automation service principal | Create a new client secret | Update `AZURE_CREDENTIALS` in GitHub and `ARM_CLIENT_SECRET` in HCP Terraform |
+| API keys | HCP Terraform → new run → replace `random_password.api_key["secondary"]`; move clients to it; later replace `primary` the same way | Clients keep working on the other key throughout. Read keys from the sensitive output `api_keys` or Web App → **Environment variables** → `API_KEYS` |
 | Alert webhook token | HCP Terraform → new run → replace `random_password.alert_webhook_token` | The apply updates both the API setting and the action group's webhook URL together |
 
 Between regenerating a hub or storage key and the apply, the Function and API fail to
@@ -167,7 +168,7 @@ Cost Management → **Cost analysis** filtered to `<rg>`.
 | # | Issue | Effect | Suggested fix | Status |
 |---|---|---|---|---|
 | 1 | `infra/environments/prod.tfvars` is a copy of the staging file (`env_prefix = "stg"`) | Using it for production would target the staging names | Before any production use: `env_prefix = "prd"`, its own HCP Terraform workspace, and its own subscription or resource group | **Fixed:** `prod.tfvars` removed until production is planned |
-| 2 | The API has no authentication | Anyone with the URL can read data and send start/stop commands | Add an API key or Microsoft Entra ID sign-in before the URL is shared outside the team | Open |
+| 2 | The API has no authentication | Anyone with the URL can read data and send start/stop commands | Add an API key or Microsoft Entra ID sign-in before the URL is shared outside the team | **Fixed:** `X-API-Key` required on every endpoint except `/healthz`; two Terraform-generated keys. Move to Entra ID sign-in before customers |
 | 3 | The two alert rules have no action group | They fire in the portal but notify nobody | Add an `azurerm_monitor_action_group` (email or push) and attach it to both rules | **Fixed:** action group `ag-<app>-<env>` calls the API's alerts webhook; alerts land in the `Alerts` table (shown once the API and panel changes ship) |
 | 4 | The missing-telemetry alert counts a custom event `DeviceTelemetry` that the Function doesn't emit | The alert can't work as intended (it may fire constantly or never) | Base it on `traces` from `telemetry_ingest`, or have the Function emit that event per message | **Fixed:** rebuilt on the Function's per-message log line; one alert per silent device, auto-resolves |
 | 5 | `device_lifecycle_trigger` (Event Grid) has no Event Grid subscription in Terraform | It never runs, so `connection_status` in `DeviceState` is never set. Connection state is available from the twin (`GET /twin`) | Add the Event Grid system topic and subscription for IoT Hub connect/disconnect events, or remove the trigger | Open (planned: wire up) |
@@ -175,6 +176,10 @@ Cost Management → **Cost analysis** filtered to `<rg>`.
 
 Smaller tidy-ups: the `scaffold..yml` workflow was a one-off and can be removed; some Terraform
 comments carry leftover `[cite: n]` markers; the Function initialises its `DeviceState` client
-twice. The resource group is in North Europe while the Function runs in Sweden Central and the
+twice.
+
+**Time zones:** everything in Azure (tables, logs, alerts, schedules) is UTC; the API, panel and
+app show WAT (UTC+1). The purge at 01:15 UTC is 02:15 WAT; the IoT Hub quota resets at
+00:00 UTC (01:00 WAT). The resource group is in North Europe while the Function runs in Sweden Central and the
 API in France Central; that works, but keeping everything in one region is simpler when moving
 off the free tiers.
