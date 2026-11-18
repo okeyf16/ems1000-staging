@@ -34,6 +34,8 @@ resource "azurerm_linux_web_app" "web_app" {
     "OTEL_SERVICE_NAME"                     = "ems-api"
     "STORAGE_CONN_STR"                      = var.storage_primary_connection_string
     "HISTORY_TABLE_NAME"                    = var.history_table_name
+    "ALERTS_TABLE_NAME"                     = var.alerts_table_name
+    "ALERT_WEBHOOK_TOKEN"                   = var.alert_webhook_token
     "IOTHUB_CONNECTION_STRING"              = "HostName=iot-${var.app_name}-${var.env_prefix}.azure-devices.net;SharedAccessKeyName=iothubowner;SharedAccessKey=${var.iothub_owner_key}"
   }
 }

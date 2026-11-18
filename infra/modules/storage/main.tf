@@ -34,6 +34,13 @@ resource "azurerm_storage_table" "device_telemetry" {
   storage_account_name = azurerm_storage_account.ems_storage.name
 }
 
+# Alerts shown in the simulator panel and (later) the mobile app: Azure Monitor alerts
+# arrive through the API's webhook, and predictive-maintenance alerts will be written here too.
+resource "azurerm_storage_table" "alerts" {
+  name                 = "Alerts"
+  storage_account_name = azurerm_storage_account.ems_storage.name
+}
+
 # Delete raw archive blobs (written by the IoT Hub storage endpoint) after N days
 resource "azurerm_storage_management_policy" "lifecycle" {
   storage_account_id = azurerm_storage_account.ems_storage.id

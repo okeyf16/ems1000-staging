@@ -17,8 +17,8 @@ commands and settings back to the device.
 | Device gateway | IoT Hub (F1, free) | `iot-<app>-<env>` | MQTT for devices; routes, direct methods, device twins |
 | Ingest | Function App (Linux, Consumption Y1, Python 3.11) | `func-<app>-<env>` | `telemetry_ingest` stores each message; `history_purge` trims history daily |
 | API | App Service (Linux, F1, Python 3.11, FastAPI) | `app-<app>-<env>-<suffix>` | `/state`, `/telemetry`, `/command`, `/live`, `/twin` |
-| Storage | Storage account (Standard LRS) | `st<app><env><suffix>` | Tables `DeviceState`, `DeviceTelemetry`; blob containers `telemetry-archive`, `dead-letter` |
-| Monitoring | Log Analytics (30-day retention, daily cap) + Application Insights | `law-…`, `appi-…` | Logs, traces, metrics, two alert rules, a workbook |
+| Storage | Storage account (Standard LRS) | `st<app><env><suffix>` | Tables `DeviceState`, `DeviceTelemetry`, `Alerts`; blob containers `telemetry-archive`, `dead-letter` |
+| Monitoring | Log Analytics (30-day retention, daily cap) + Application Insights + action group | `law-…`, `appi-…`, `ag-…` | Logs, traces, metrics, two alert rules that notify the API's alerts webhook, a workbook |
 
 `<app>` is `app_name` (default `ems1000`), `<env>` is `env_prefix` (e.g. `stg`), and
 `<suffix>` is a random 4-character string Terraform generates for globally unique names.
@@ -81,7 +81,7 @@ route sends them, so `telemetry-to-builtin` must stay for the Function to receiv
 infra/                       Terraform (run by HCP Terraform, VCS-driven)
   main.tf                    Root: resource group + the five modules
   variables.tf, outputs.tf, providers.tf, backend.tf
-  environments/              staging.tfvars, prod.tfvars
+  environments/              staging.tfvars (a prod file is added when production is planned)
   modules/
     iothub/                  Hub, routes, archive endpoint, diagnostics
     storage/                 Account, tables, containers, archive lifecycle rule

@@ -90,6 +90,7 @@ Its rows in `DeviceState` stay until deleted; history ages out after the retenti
 | `iothubowner` (used by the Function and the API) | IoT Hub → **Shared access policies** → `iothubowner` → regenerate the primary key | Run an HCP Terraform plan and apply: it rewrites both apps' settings from the new key |
 | Storage account key | Storage account → **Access keys** → rotate key 1 | Plan and apply, as above |
 | Automation service principal | Create a new client secret | Update `AZURE_CREDENTIALS` in GitHub and `ARM_CLIENT_SECRET` in HCP Terraform |
+| Alert webhook token | HCP Terraform → new run → replace `random_password.alert_webhook_token` | The apply updates both the API setting and the action group's webhook URL together |
 
 Between regenerating a hub or storage key and the apply, the Function and API fail to
 authenticate: do it in a quiet window and apply straight away.
@@ -132,14 +133,14 @@ Cost Management → **Cost analysis** filtered to `<rg>`.
 
 ## Known issues
 
-| # | Issue | Effect | Suggested fix |
-|---|---|---|---|
-| 1 | `infra/environments/prod.tfvars` is a copy of the staging file (`env_prefix = "stg"`) | Using it for production would target the staging names | Before any production use: `env_prefix = "prd"`, its own HCP Terraform workspace, and its own subscription or resource group |
-| 2 | The API has no authentication | Anyone with the URL can read data and send start/stop commands | Add an API key or Microsoft Entra ID sign-in before the URL is shared outside the team |
-| 3 | The two alert rules have no action group | They fire in the portal but notify nobody | Add an `azurerm_monitor_action_group` (email or push) and attach it to both rules |
-| 4 | The missing-telemetry alert counts a custom event `DeviceTelemetry` that the Function doesn't emit | The alert can't work as intended (it may fire constantly or never) | Base it on `traces` from `telemetry_ingest`, or have the Function emit that event per message |
-| 5 | `device_lifecycle_trigger` (Event Grid) has no Event Grid subscription in Terraform | It never runs, so `connection_status` in `DeviceState` is never set. Connection state is available from the twin (`GET /twin`) | Add the Event Grid system topic and subscription for IoT Hub connect/disconnect events, or remove the trigger |
-| 6 | The Function and the API both use the `iothubowner` policy (full rights) | A leaked setting gives full control of the hub | Separate policies: the API with *service connect* + *registry read/write*, the Function with *service connect* only |
+| # | Issue | Effect | Suggested fix | Status |
+|---|---|---|---|---|
+| 1 | `infra/environments/prod.tfvars` is a copy of the staging file (`env_prefix = "stg"`) | Using it for production would target the staging names | Before any production use: `env_prefix = "prd"`, its own HCP Terraform workspace, and its own subscription or resource group | **Fixed:** `prod.tfvars` removed until production is planned |
+| 2 | The API has no authentication | Anyone with the URL can read data and send start/stop commands | Add an API key or Microsoft Entra ID sign-in before the URL is shared outside the team | Open |
+| 3 | The two alert rules have no action group | They fire in the portal but notify nobody | Add an `azurerm_monitor_action_group` (email or push) and attach it to both rules | **Fixed:** action group `ag-<app>-<env>` calls the API's alerts webhook; alerts land in the `Alerts` table (shown once the API and panel changes ship) |
+| 4 | The missing-telemetry alert counts a custom event `DeviceTelemetry` that the Function doesn't emit | The alert can't work as intended (it may fire constantly or never) | Base it on `traces` from `telemetry_ingest`, or have the Function emit that event per message | **Fixed:** rebuilt on the Function's per-message log line; one alert per silent device, auto-resolves |
+| 5 | `device_lifecycle_trigger` (Event Grid) has no Event Grid subscription in Terraform | It never runs, so `connection_status` in `DeviceState` is never set. Connection state is available from the twin (`GET /twin`) | Add the Event Grid system topic and subscription for IoT Hub connect/disconnect events, or remove the trigger | Open (planned: wire up) |
+| 6 | The Function and the API both use the `iothubowner` policy (full rights) | A leaked setting gives full control of the hub | Separate policies: the API with *service connect* + *registry read/write*, the Function with *service connect* only | Open |
 
 Smaller tidy-ups: the `scaffold..yml` workflow was a one-off and can be removed; some Terraform
 comments carry leftover `[cite: n]` markers; the Function initialises its `DeviceState` client

@@ -19,3 +19,7 @@ output "telemetry_table_name" {
 output "telemetry_archive_container_name" {
   value = azurerm_storage_container.telemetry_archive.name
 }
+
+output "alerts_table_name" {
+  value = azurerm_storage_table.alerts.name
+}

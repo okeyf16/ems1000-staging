@@ -26,6 +26,8 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 | S-02 | Routes in place | IoT Hub → **Message routing** | `telemetry-to-builtin` (endpoint `events`) and `telemetry-to-archive`, both enabled |
 | S-03 | App settings intact | Function App and Web App → **Environment variables** | Settings as in [REFERENCE.md](REFERENCE.md#app-settings); Function still has `WEBSITE_RUN_FROM_PACKAGE` |
 | S-04 | Pipeline still flows | Run the simulator for 3 messages, then `GET /api/devices/<id>/state` | `enqueued_time` within the last minute |
+| S-05 | Alerts wired to the action group | Azure Monitor → **Alerts** → **Alert rules** | Both rules enabled, each with action group `ag-<app>-<env>`; the group has webhook `api-alerts` |
+| S-06 | Missing-telemetry alert fires | Send a few messages, stop the device for 20–30 min | Monitor → **Alerts** shows a *Fired* alert for `<id>`; it resolves after the device sends again |
 
 ## After a Function deploy
 
