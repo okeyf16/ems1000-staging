@@ -21,3 +21,8 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "action_group_id" {
+  type        = string
+  description = "Action group both alert rules notify (webhook to the API's alerts endpoint)"
+}

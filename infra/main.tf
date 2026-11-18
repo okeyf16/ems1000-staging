@@ -20,6 +20,9 @@ module "observability" {
   env_prefix          = var.env_prefix
   daily_quota_gb      = var.daily_quota_gb
   tags                = azurerm_resource_group.rg.tags
+
+  # Both alert rules notify this group (defined below, after the API it calls)
+  action_group_id = azurerm_monitor_action_group.alerts.id
 }
 
 # Phase 1: Storage Layer
@@ -85,4 +88,27 @@ module "app_service" {
   log_analytics_workspace_id        = module.observability.log_analytics_workspace_id
   tags                              = azurerm_resource_group.rg.tags
   history_table_name                = module.storage.telemetry_table_name
+  alerts_table_name                 = module.storage.alerts_table_name
+  alert_webhook_token               = random_password.alert_webhook_token.result
+}
+
+# Alerts reach the simulator panel (and later the mobile app) through the API:
+# Azure Monitor calls the API's webhook, which stores them in the Alerts table.
+# The token in the URL is the webhook's only credential (Azure Monitor can't send headers).
+resource "random_password" "alert_webhook_token" {
+  length  = 40
+  special = false
+}
+
+resource "azurerm_monitor_action_group" "alerts" {
+  name                = "ag-${var.app_name}-${var.env_prefix}"
+  resource_group_name = azurerm_resource_group.rg.name
+  short_name          = "ems-alerts" # max 12 characters, shown in notifications
+  tags                = azurerm_resource_group.rg.tags
+
+  webhook_receiver {
+    name                    = "api-alerts"
+    service_uri             = "https://${module.app_service.web_app_default_hostname}/api/alerts/azure-monitor?token=${random_password.alert_webhook_token.result}"
+    use_common_alert_schema = true
+  }
 }

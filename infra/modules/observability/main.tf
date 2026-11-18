@@ -41,32 +41,54 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "latency_alert" {
     operator                = "GreaterThan"
     metric_measure_column   = "p95_latency"
   }
+
+  action {
+    action_groups = [var.action_group_id]
+  }
 }
 
-# Alert 2: Missing Telemetry (No data for 3 intervals / 15 mins)[cite: 1]
+# Alert 2: Missing telemetry. A device that sent data in the last day but nothing for
+# 15 minutes. Based on the log line telemetry_ingest writes for every stored message
+# ("Successfully updated DeviceState for <id>"); one alert per silent device, which
+# resolves by itself when the device sends again.
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "missing_telemetry" {
-  name                = "alert-missing-telemetry-${var.env_prefix}"
-  resource_group_name = var.resource_group_name
-  location            = var.location
-  scopes              = [azurerm_application_insights.appinsights.id]
-  description         = "Fires if a known device sends 0 messages in 15 minutes."
-  severity            = 1
-  evaluation_frequency = "PT15M"
-  window_duration      = "PT15M"
+  name                    = "alert-missing-telemetry-${var.env_prefix}"
+  resource_group_name     = var.resource_group_name
+  location                = var.location
+  scopes                  = [azurerm_application_insights.appinsights.id]
+  description             = "Fires for each device that sent telemetry in the last day but nothing in the last 15 minutes."
+  severity                = 1
+  evaluation_frequency    = "PT15M"
+  window_duration         = "P1D"
+  auto_mitigation_enabled = true
 
   criteria {
     query                   = <<-KQL
-      customEvents
-      | where name == "DeviceTelemetry"
-      | summarize Count = count() by tostring(customDimensions.device_id)
+      traces
+      | where message startswith "Successfully updated DeviceState for "
+      | extend device_id = trim(" ", substring(message, strlen("Successfully updated DeviceState for ")))
+      | summarize last_seen = max(timestamp) by device_id
+      | where last_seen < ago(15m)
+      | extend minutes_silent = datetime_diff("minute", now(), last_seen)
     KQL
     time_aggregation_method = "Count"
     threshold               = 0
-    operator                = "LessThanOrEqual"
+    operator                = "GreaterThan"
+
+    dimension {
+      name     = "device_id"
+      operator = "Include"
+      values   = ["*"]
+    }
+
     failing_periods {
       minimum_failing_periods_to_trigger_alert = 1
       number_of_evaluation_periods             = 1
     }
+  }
+
+  action {
+    action_groups = [var.action_group_id]
   }
 }
 

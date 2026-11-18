@@ -62,3 +62,14 @@ variable "history_table_name" {
   type        = string
   description = "Table holding per-message telemetry history"
 }
+
+variable "alerts_table_name" {
+  type        = string
+  description = "Table the API writes alerts to (webhook) and reads them from (GET /api/alerts)"
+}
+
+variable "alert_webhook_token" {
+  type        = string
+  description = "Shared secret Azure Monitor sends in the webhook URL (?token=...)"
+  sensitive   = true
+}
