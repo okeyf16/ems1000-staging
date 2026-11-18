@@ -80,6 +80,8 @@ route sends them, so `telemetry-to-builtin` must stay for the Function to receiv
 ```
 infra/                       Terraform (run by HCP Terraform, VCS-driven)
   main.tf                    Root: resource group + the five modules
+  access.tf                  IoT Hub tester role + assignments, 'testing' consumer group
+  testers.auto.tfvars        Who has tester access (name => Entra object ID)
   variables.tf, outputs.tf, providers.tf, backend.tf
   environments/              staging.tfvars (a prod file is added when production is planned)
   modules/

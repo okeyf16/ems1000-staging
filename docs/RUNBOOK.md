@@ -42,8 +42,10 @@ import-fail on Azure and the Function then shows no functions.
 
 Needed once per environment (or when moving to a new subscription).
 
-1. **Azure identity for automation.** Create a service principal with Contributor on the
-   subscription (or the resource group, once it exists).
+1. **Azure identity for automation.** Create a service principal with **Contributor** on the
+   subscription (or the resource group, once it exists), plus **User Access Administrator** on the
+   resource group so Terraform can create the tester role and its assignments (`infra/access.tf`).
+   Contributor alone can't write role definitions or assignments.
 2. **HCP Terraform workspace.** VCS-driven, connected to this repo, working directory `infra`,
    auto-apply off. Set:
    - Environment variables (sensitive): `ARM_CLIENT_ID`, `ARM_CLIENT_SECRET`, `ARM_TENANT_ID`,
@@ -81,6 +83,35 @@ secret `IOTHUB_DEVICE_CONNECTION_STRING`). The `id` field in the device's teleme
 
 Remove a device: `az iot hub device-identity delete --hub-name <hub> --device-id <device-id>`.
 Its rows in `DeviceState` stay until deleted; history ages out after the retention period.
+
+## Giving a tester access
+
+External testers (e.g. the firmware engineer) use their own Microsoft Entra guest account; no
+keys are shared for hub access. Defined in `infra/access.tf`, listed in
+`infra/testers.auto.tfvars`.
+
+1. Entra ID → **Users** → **Invite external user**. The guest account and its object ID exist
+   at once; access starts when they accept.
+2. Add a line to `infra/testers.auto.tfvars`: `name = "<object-id>"`. Open a PR, check the plan
+   adds two role assignments, merge and apply.
+3. Tell them: sign in at portal.azure.com, switch to your directory, open the hub. They can
+   create their own devices (e.g. `ems-<name>-01`), set twins, call direct methods, and watch
+   messages (see the note below).
+
+| They can | They can't |
+|---|---|
+| See the hub (Reader); create and update devices; read and write twins; invoke direct methods; send cloud-to-device messages | Delete devices, run bulk import/export jobs, read or regenerate the hub's shared access keys, change routes or any Azure setting |
+
+Role assignments can't be narrower than the hub, so a tester can also update other devices, for
+example disable the simulator's device or regenerate its key. If that happens, re-provision it
+(see [Adding a device](#adding-a-device)).
+
+Watching live messages: the built-in events endpoint only accepts connection strings, not Entra
+sign-in. Testers watch through the API's `/telemetry`, the simulator panel, or a
+service-connect-only access policy you create for them (revocable) used with `--cg testing`.
+
+Revoke: remove their line and apply, or delete the guest account (which removes its role
+assignments too).
 
 ## Rotating keys
 
