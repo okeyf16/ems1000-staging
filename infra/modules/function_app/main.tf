@@ -17,6 +17,9 @@ resource "azurerm_linux_function_app" "function_app" {
   tags                       = var.tags
 
   site_config {
+    # Sets APPLICATIONINSIGHTS_CONNECTION_STRING; the provider manages it here, not in app_settings
+    application_insights_connection_string = var.app_insights_connection_string
+
     application_stack {
       python_version = "3.11"
     }
@@ -24,10 +27,10 @@ resource "azurerm_linux_function_app" "function_app" {
 
   app_settings = {
     # Core Function configuration
-    "FUNCTIONS_WORKER_RUNTIME"              = "python"
-    "AzureWebJobsStorage"                   = var.storage_primary_connection_string
-    "APPLICATIONINSIGHTS_CONNECTION_STRING" = var.app_insights_connection_string
-    "PYTHON_ENABLE_WORKER_EXTENSIONS"       = "1"
+    # AzureWebJobsStorage comes from storage_account_name/access_key above, and App Insights
+    # from site_config; listing them here too made every plan show a change.
+    "FUNCTIONS_WORKER_RUNTIME"        = "python"
+    "PYTHON_ENABLE_WORKER_EXTENSIONS" = "1"
 
     # Construct the Event Hub-compatible connection string for the IoT Hub trigger
     "IOTHUB_EVENTS_CONNECTION_STRING" = "Endpoint=${var.iothub_events_endpoint};SharedAccessKeyName=iothubowner;SharedAccessKey=${var.iothub_owner_key};EntityPath=${var.iothub_events_path}"
@@ -46,6 +49,8 @@ resource "azurerm_linux_function_app" "function_app" {
     # or the deployed code is unmounted until the next deploy.
     ignore_changes = [
       app_settings["WEBSITE_RUN_FROM_PACKAGE"],
+      # Added by the deploy workflow when publishing; not needed at runtime
+      app_settings["WEBSITE_ENABLE_SYNC_UPDATE_SITE"],
     ]
   }
 }

@@ -37,8 +37,11 @@ Check each hop in order: device → hub → route → Function → table.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| 401 "Missing or invalid API key" | No `X-API-Key` header, or an old key after rotation | Send a current key (output `api_keys`); on `/docs` use **Authorize** |
+| 503 "API keys are not configured" | `API_KEYS` missing on the Web App | Re-apply Terraform |
 | First request takes ~30 s | F1 has no always-on: the app sleeps when idle | Expected on F1. B1 or above enables always-on automatically |
 | 503 from every endpoint | App failed to start (import error after a deploy) or the F1 daily CPU quota is used up | Web App → **Log stream**; App Service → **Quotas**. Redeploy or wait for the quota reset |
+| Alerts never appear in `GET /api/alerts` | Webhook token mismatch (401 in Web App logs), or the action group not attached | Re-apply Terraform (it sets the token on both sides); Monitor → **Alert rules** → check the action group |
 | `/state` returns 404 | No telemetry yet for that device ID, or a typo | Send a message; check the ID matches the device identity |
 | `/state` data is old | The device is stopped, or telemetry isn't reaching the Function | Check the [telemetry section](#telemetry-doesnt-arrive). `/live` asks the device directly |
 | `/telemetry` returns 500 | History table missing or `HISTORY_TABLE_NAME` wrong | Re-apply Terraform |

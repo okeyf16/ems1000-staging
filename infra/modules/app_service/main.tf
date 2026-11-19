@@ -36,6 +36,7 @@ resource "azurerm_linux_web_app" "web_app" {
     "HISTORY_TABLE_NAME"                    = var.history_table_name
     "ALERTS_TABLE_NAME"                     = var.alerts_table_name
     "ALERT_WEBHOOK_TOKEN"                   = var.alert_webhook_token
+    "API_KEYS"                              = join(",", var.api_keys)
     "IOTHUB_CONNECTION_STRING"              = "HostName=iot-${var.app_name}-${var.env_prefix}.azure-devices.net;SharedAccessKeyName=iothubowner;SharedAccessKey=${var.iothub_owner_key}"
   }
 }

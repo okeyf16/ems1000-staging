@@ -40,3 +40,15 @@ variable "archive_retention_days" {
   default     = 30
   description = "Days raw telemetry archive blobs are kept before lifecycle deletion"
 }
+
+variable "missing_telemetry_silence_minutes" {
+  type        = number
+  description = "Minutes without telemetry before the missing-telemetry alert fires for a device"
+  default     = 5
+}
+
+variable "missing_telemetry_check_minutes" {
+  type        = number
+  description = "How often the missing-telemetry alert rule runs (1, 5, 10 or 15 minutes)"
+  default     = 5
+}

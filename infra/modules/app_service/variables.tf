@@ -73,3 +73,9 @@ variable "alert_webhook_token" {
   description = "Shared secret Azure Monitor sends in the webhook URL (?token=...)"
   sensitive   = true
 }
+
+variable "api_keys" {
+  type        = list(string)
+  description = "API keys accepted in the X-API-Key header (two, so one can be rotated at a time)"
+  sensitive   = true
+}

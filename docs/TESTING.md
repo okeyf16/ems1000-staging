@@ -13,6 +13,7 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 |---|---|
 | A device sending telemetry | The [device simulator](https://github.com/okeyf16/ems1000-device-sim) in its Codespace: `python cli.py run --interval 10` |
 | API test page | `<api-base-url>/docs` (Terraform output `api_base_url`) |
+| API key | Terraform output `api_keys` (or Web App → **Environment variables** → `API_KEYS`). On `/docs` select **Authorize** once; every call below except `/healthz` needs it |
 | Logs | Function App → **Application Insights** → **Logs** |
 | Message budget | Each test below uses a handful of the hub's 8,000 daily messages; stop the simulator (Ctrl+C) between groups |
 
@@ -27,7 +28,7 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 | S-03 | App settings intact | Function App and Web App → **Environment variables** | Settings as in [REFERENCE.md](REFERENCE.md#app-settings); Function still has `WEBSITE_RUN_FROM_PACKAGE` |
 | S-04 | Pipeline still flows | Run the simulator for 3 messages, then `GET /api/devices/<id>/state` | `enqueued_time` within the last minute |
 | S-05 | Alerts wired to the action group | Azure Monitor → **Alerts** → **Alert rules** | Both rules enabled, each with action group `ag-<app>-<env>`; the group has webhook `api-alerts` |
-| S-06 | Missing-telemetry alert fires | Send a few messages, stop the device for 20–30 min | Monitor → **Alerts** shows a *Fired* alert for `<id>`; it resolves after the device sends again |
+| S-06 | Missing-telemetry alert fires | Send a few messages, stop the device for about 12 min | Monitor → **Alerts** shows a *Fired* alert for `<id>`; it resolves after the device sends again |
 
 ## After a Function deploy
 
@@ -50,6 +51,18 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 | S-24 | Offline handling | Stop the simulator; repeat S-23 | 504 "Device unreachable…" |
 | S-25 | Twin read | `GET /api/devices/<id>/twin` | 200; `connection_state` and `reported` present |
 | S-26 | Twin validation | `PATCH …/twin {"speed": 0}` | 400 with `must be between 1 and 3600`; nothing sent |
+| S-27 | Key required | `GET /api/devices/<id>/state` without a key, then with one (on `/docs`: **Authorize**) | 401, then 200 |
+| S-28 | New state shape | `GET /api/devices/<id>/state` | `source: stored`, `readings`/`status`/`link`, `received_at` ending `+01:00`, `soc_pct`, `load_pct` |
+| S-29 | Live state | Device running; `GET …/state?live=true`; also the old `/live` | `source: device`, `age_s` 0, same shape; `/live` marked deprecated in `/docs` |
+
+## Alerts (after PR 1 and the API change)
+
+| ID | Check | How | Expected |
+|---|---|---|---|
+| S-35 | Webhook rejects strangers | `POST <api>/api/alerts/azure-monitor?token=wrong` with `{}` | 401 |
+| S-36 | Fired alert reaches the API | Run S-06 (stop the device about 12 min) | `GET /api/alerts?status=active` lists `alert-missing-telemetry-…` for `<id>`, times in WAT |
+| S-37 | Resolved updates the same alert | Start the device again; wait about 15 min | Same `id`, now `status: resolved` with `resolved_at` |
+| S-38 | Panel shows alerts | Simulator panel, Alerts box | The alert appears, then shows resolved |
 
 ## Retention (run once after setup, then occasionally)
 
@@ -87,5 +100,5 @@ az iot hub invoke-device-method --hub-name <hub> --device-id <id> --method-name 
 
 # API
 curl -s <api-base-url>/healthz
-curl -s <api-base-url>/api/devices/<id>/state
+curl -s -H "X-API-Key: <key>" <api-base-url>/api/devices/<id>/state
 ```
