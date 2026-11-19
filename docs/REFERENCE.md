@@ -232,6 +232,6 @@ Start command: `gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 m
 | Application Insights | Workspace-based; Function and API send traces, exceptions, dependencies |
 | Custom metric | `ingest_latency_ms`: IoT Hub enqueue to Function processing |
 | Alert: latency | p95 `ingest_latency_ms` above 60 s over 15 min (severity 2) |
-| Alert: missing telemetry | One alert per device that sent telemetry in the last day but nothing for 15 min (severity 1); based on the Function's per-message log line; resolves when the device sends again |
+| Alert: missing telemetry | One alert per device that sent telemetry in the last day but nothing for 5 min (`missing_telemetry_silence_minutes`), checked every 5 min (`missing_telemetry_check_minutes`); severity 1; based on the Function's per-message log line. Fires about 7–12 min after a device goes quiet and resolves about 15 min after it returns (Azure needs three clean checks). Keep the silence above 3× the heartbeat interval |
 | Action group | `ag-<app>-<env>`: both alerts call `https://<api>/api/alerts/azure-monitor?token=…` with the common alert schema |
 | Workbook | "EMS1000 Pipeline Health" (placeholder content) |

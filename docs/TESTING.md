@@ -28,7 +28,7 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 | S-03 | App settings intact | Function App and Web App → **Environment variables** | Settings as in [REFERENCE.md](REFERENCE.md#app-settings); Function still has `WEBSITE_RUN_FROM_PACKAGE` |
 | S-04 | Pipeline still flows | Run the simulator for 3 messages, then `GET /api/devices/<id>/state` | `enqueued_time` within the last minute |
 | S-05 | Alerts wired to the action group | Azure Monitor → **Alerts** → **Alert rules** | Both rules enabled, each with action group `ag-<app>-<env>`; the group has webhook `api-alerts` |
-| S-06 | Missing-telemetry alert fires | Send a few messages, stop the device for 20–30 min | Monitor → **Alerts** shows a *Fired* alert for `<id>`; it resolves after the device sends again |
+| S-06 | Missing-telemetry alert fires | Send a few messages, stop the device for about 12 min | Monitor → **Alerts** shows a *Fired* alert for `<id>`; it resolves after the device sends again |
 
 ## After a Function deploy
 
@@ -60,8 +60,8 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 | ID | Check | How | Expected |
 |---|---|---|---|
 | S-35 | Webhook rejects strangers | `POST <api>/api/alerts/azure-monitor?token=wrong` with `{}` | 401 |
-| S-36 | Fired alert reaches the API | Run S-06 (stop the device 20–30 min) | `GET /api/alerts?status=active` lists `alert-missing-telemetry-…` for `<id>`, times in WAT |
-| S-37 | Resolved updates the same alert | Start the device again; wait up to 15 min | Same `id`, now `status: resolved` with `resolved_at` |
+| S-36 | Fired alert reaches the API | Run S-06 (stop the device about 12 min) | `GET /api/alerts?status=active` lists `alert-missing-telemetry-…` for `<id>`, times in WAT |
+| S-37 | Resolved updates the same alert | Start the device again; wait about 15 min | Same `id`, now `status: resolved` with `resolved_at` |
 | S-38 | Panel shows alerts | Simulator panel, Alerts box | The alert appears, then shows resolved |
 
 ## Retention (run once after setup, then occasionally)

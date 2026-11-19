@@ -23,6 +23,9 @@ module "observability" {
 
   # Both alert rules notify this group (defined below, after the API it calls)
   action_group_id = azurerm_monitor_action_group.alerts.id
+
+  missing_telemetry_silence_minutes = var.missing_telemetry_silence_minutes
+  missing_telemetry_check_minutes   = var.missing_telemetry_check_minutes
 }
 
 # Phase 1: Storage Layer
