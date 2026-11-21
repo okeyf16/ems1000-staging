@@ -179,3 +179,32 @@ resource "azurerm_monitor_action_group" "alerts" {
     use_common_alert_schema = true
   }
 }
+
+# IoT Hub daily message quota: warn at each percentage in iothub_quota_alert_percents
+# (default 70 % and 90 %) of iothub_daily_message_quota (F1: 8,000, resets 00:00 UTC).
+# Same action group as the other alerts, so they show on the panel as System alerts.
+# Added after a reconnect loop used the whole free day in minutes (21 Nov 2026).
+resource "azurerm_monitor_metric_alert" "iothub_quota" {
+  for_each            = toset([for p in var.iothub_quota_alert_percents : tostring(p)])
+  name                = "alert-iothub-quota-${each.value}-${var.env_prefix}"
+  resource_group_name = azurerm_resource_group.rg.name
+  scopes              = [module.iothub.iothub_id]
+  description         = "IoT Hub has used ${each.value} % of its ${var.iothub_daily_message_quota} daily messages (resets 00:00 UTC)."
+  severity            = tonumber(each.value) >= 90 ? 1 : 2
+  frequency           = "PT5M"
+  window_size         = "PT15M"
+  auto_mitigate       = true
+  tags                = azurerm_resource_group.rg.tags
+
+  criteria {
+    metric_namespace = "Microsoft.Devices/IotHubs"
+    metric_name      = "dailyMessageQuotaUsed"
+    aggregation      = "Maximum"
+    operator         = "GreaterThanOrEqual"
+    threshold        = floor(var.iothub_daily_message_quota * tonumber(each.value) / 100)
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.alerts.id
+  }
+}

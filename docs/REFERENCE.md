@@ -100,6 +100,7 @@ complete the set.
 | `alert-missing-telemetry-<env>` | `azure-monitor` | A device that sent in the last day has been silent for `missing_telemetry_silence_minutes` | It sends again (three clean checks) |
 | `alert-latency-<env>` | `azure-monitor` (`device_id` null) | p95 ingest latency over 60 s in `latency_alert_failing_periods` of `latency_alert_evaluation_periods` 15-minute checks (default 2 of 2) | A check is healthy again |
 | `device-offline` | `event-grid` | Disconnected (Event Grid) for `offline_grace_minutes` (default 2) | It reconnects, or sends telemetry (a missed Connected event) |
+| `alert-iothub-quota-70-<env>`, `-90-` | `azure-monitor` (`device_id` null) | The hub's messages today reach 70 % / 90 % of the daily quota | The quota resets at 00:00 UTC |
 
 ### Commands
 
@@ -267,5 +268,6 @@ Start command: `gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 m
 | Alert: latency | p95 `ingest_latency_ms` above 60 s in `latency_alert_failing_periods` of the last `latency_alert_evaluation_periods` 15-minute checks (default 2 of 2, so about 30 min of slowness); severity 2; auto-resolves at the next healthy check. Set both to 1 for the old one-check behaviour |
 | Alert: device offline | Not an Azure Monitor rule: the Function writes it after `offline_grace_minutes` (2) of disconnection; severity 1; resolves on reconnect. About 2–4 min after a clean disconnect; after a power cut add IoT Hub's keep-alive timeout |
 | Alert: missing telemetry | One alert per device that sent telemetry in the last day but nothing for 5 min (`missing_telemetry_silence_minutes`), checked every 5 min (`missing_telemetry_check_minutes`); severity 1; based on the Function's per-message log line. Fires about 7–12 min after a device goes quiet and resolves about 15 min after it returns (Azure needs three clean checks). Keep the silence above 3× the heartbeat interval |
-| Action group | `ag-<app>-<env>`: both alerts call `https://<api>/api/alerts/azure-monitor?token=…` with the common alert schema |
+| Alert: IoT Hub quota | Metric alerts `alert-iothub-quota-70-<env>` (severity 2) and `-90-` (severity 1) on `dailyMessageQuotaUsed` (Maximum) reaching that share of `iothub_daily_message_quota` (8,000); checked every 5 min; resolve after the 00:00 UTC reset. Percentages: `iothub_quota_alert_percents` |
+| Action group | `ag-<app>-<env>`: every Azure Monitor alert above calls `https://<api>/api/alerts/azure-monitor?token=…` with the common alert schema |
 | Workbook | "EMS1000 Pipeline Health" (placeholder content) |

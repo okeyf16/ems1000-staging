@@ -161,7 +161,10 @@ The pilot is designed to cost close to nothing. The limits that matter:
 | Event Grid (Basic) | 100,000 operations a month free (each event = publish + delivery) | Billed per million operations beyond it; staging stays far below | No change needed until thousands of devices |
 
 Message budget: a device sending every 60 s uses 1,440 messages a day, so F1 carries about five
-devices. Direct methods, twin reads and twin updates count against the same 8,000. The device
+devices. Two clients using the same device ID knock each other off and reconnect in a loop; on
+21 Nov 2026 that used the whole day (29,631 messages) in minutes. The quota alerts (70 %, 90 %)
+show on the panel within about 5 minutes; to find the cause, query the hub's `Connections` logs:
+`AzureDiagnostics | where ResourceProvider == "MICROSOFT.DEVICES" and Category == "Connections" | summarize count() by bin(TimeGenerated, 5m), OperationName`. Direct methods, twin reads and twin updates count against the same 8,000. The device
 simulator has a budget guard that stops at 7,500.
 
 Check usage: IoT Hub → **Metrics** → *Total number of messages used*; App Service → **Quotas**;
@@ -186,6 +189,7 @@ All in `infra/variables.tf` (or a workspace variable in HCP Terraform); apply to
 | `offline_grace_minutes` | 2 | How long a device may stay disconnected before **Device offline** is raised. Raise it if quick reconnects (Wi-Fi blips, simulator restarts) cause noise |
 | `latency_alert_evaluation_periods` / `latency_alert_failing_periods` | 2 / 2 | The latency alert fires when that many of the last 15-minute checks are slow; 1 / 1 fires on any single slow check |
 | `alerts_retention_days` | 30 | How long resolved alerts stay in the `Alerts` table |
+| `iothub_daily_message_quota` / `iothub_quota_alert_percents` | 8000 / [70, 90] | Quota alerts fire at those shares of the day's messages. Change the quota when the hub moves to S1 (400,000 per unit) |
 
 Devices should use an MQTT keep-alive of 60–120 s. IoT Hub only notices an unclean drop (power
 cut) after about 1.5 × the keep-alive, so that time adds to `offline_grace_minutes`.

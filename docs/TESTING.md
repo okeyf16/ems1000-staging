@@ -100,6 +100,8 @@ the `OfflinePending` table and the Event Grid subscription, `offline_check` simp
 | S-48 | Short gap: no alert | Restart the simulator within 1 min | No `device-offline` alert in `GET /api/alerts?device_id=<id>` |
 | S-49 | Long gap: alert, then resolved | Stop for about 4 min, then start again | `device-offline` appears `active` after about 2–3 min (`source: event-grid`); after the restart it shows `resolved` with `resolved_at` |
 | S-50 | Latency alert settings | Monitor → **Alert rules** → `alert-latency-<env>` | Condition shows *2 of 2* violations (number of evaluation periods 2); **Automatically resolve alerts** on |
+| S-54 | Quota alert rules | Monitor → **Alert rules** | `alert-iothub-quota-70-<env>` and `-90-` enabled, signal *Total number of messages used*, action group `ag-<app>-<env>` |
+| S-55 | Quota alert reaches the panel (when it happens) | Next time usage passes 70 % | `GET /api/alerts?status=active` lists it with `device_id: null`; panel shows **System: IoT Hub daily quota 70 % used** |
 
 ## Command line alternative
 

@@ -88,3 +88,19 @@ variable "latency_alert_failing_periods" {
     error_message = "Use 1 to 6 (and no more than latency_alert_evaluation_periods)."
   }
 }
+
+variable "iothub_daily_message_quota" {
+  type        = number
+  description = "The hub's daily message quota (F1: 8,000; S1: 400,000 per unit), used for the quota alerts"
+  default     = 8000
+}
+
+variable "iothub_quota_alert_percents" {
+  type        = list(number)
+  description = "Raise an alert when the day's messages reach each of these percentages of the quota"
+  default     = [70, 90]
+  validation {
+    condition     = alltrue([for p in var.iothub_quota_alert_percents : p > 0 && p < 100])
+    error_message = "Use percentages between 1 and 99."
+  }
+}
