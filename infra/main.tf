@@ -26,6 +26,9 @@ module "observability" {
 
   missing_telemetry_silence_minutes = var.missing_telemetry_silence_minutes
   missing_telemetry_check_minutes   = var.missing_telemetry_check_minutes
+
+  latency_alert_evaluation_periods = var.latency_alert_evaluation_periods
+  latency_alert_failing_periods    = var.latency_alert_failing_periods
 }
 
 # Phase 1: Storage Layer
@@ -75,7 +78,51 @@ module "function_app" {
   # Per-message telemetry history
   history_table_name     = module.storage.telemetry_table_name
   history_retention_days = var.history_retention_days
+
+  # Device connection state and the "Device offline" alert
+  alerts_table_name          = module.storage.alerts_table_name
+  offline_pending_table_name = module.storage.offline_pending_table_name
+  offline_grace_minutes      = var.offline_grace_minutes
+  alerts_retention_days      = var.alerts_retention_days
 }
+
+# Device connect/disconnect events: IoT Hub -> Event Grid -> the Function's
+# device_lifecycle_trigger, which keeps connection_status in DeviceState and raises the
+# "Device offline" alert. Event Grid's free grant (100,000 operations a month) covers staging.
+resource "azurerm_eventgrid_system_topic" "iothub" {
+  name                   = "egst-iothub-${var.app_name}-${var.env_prefix}"
+  resource_group_name    = azurerm_resource_group.rg.name
+  location               = azurerm_resource_group.rg.location
+  source_arm_resource_id = module.iothub.iothub_id
+  topic_type             = "Microsoft.Devices.IoTHubs"
+  tags                   = azurerm_resource_group.rg.tags
+}
+
+resource "azurerm_eventgrid_system_topic_event_subscription" "device_lifecycle" {
+  name                = "device-lifecycle-to-function"
+  system_topic        = azurerm_eventgrid_system_topic.iothub.name
+  resource_group_name = azurerm_resource_group.rg.name
+
+  included_event_types = [
+    "Microsoft.Devices.DeviceConnected",
+    "Microsoft.Devices.DeviceDisconnected",
+  ]
+
+  # The function must already be deployed: Event Grid checks the endpoint when the
+  # subscription is created (deploy-function runs on every merge to main).
+  azure_function_endpoint {
+    function_id                       = "${module.function_app.function_app_id}/functions/device_lifecycle_trigger"
+    max_events_per_batch              = 1
+    preferred_batch_size_in_kilobytes = 64
+  }
+
+  # Connection events are only useful while fresh: retry for up to an hour, then drop.
+  retry_policy {
+    max_delivery_attempts = 10
+    event_time_to_live    = 60
+  }
+}
+
 # Phase 3: API Layer (FastAPI on Linux App Service F1)
 module "app_service" {
   source                            = "./modules/app_service"

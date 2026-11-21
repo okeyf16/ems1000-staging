@@ -41,6 +41,13 @@ resource "azurerm_storage_table" "alerts" {
   storage_account_name = azurerm_storage_account.ems_storage.name
 }
 
+# Devices that disconnected (Event Grid) and haven't reconnected yet. The Function's
+# offline_check timer reads only this short list, so its cost doesn't grow with the fleet.
+resource "azurerm_storage_table" "offline_pending" {
+  name                 = "OfflinePending"
+  storage_account_name = azurerm_storage_account.ems_storage.name
+}
+
 # Delete raw archive blobs (written by the IoT Hub storage endpoint) after N days
 resource "azurerm_storage_management_policy" "lifecycle" {
   storage_account_id = azurerm_storage_account.ems_storage.id

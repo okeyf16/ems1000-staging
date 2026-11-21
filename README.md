@@ -15,9 +15,10 @@ commands and settings back to the device.
 |---|---|---|---|
 | Resource group | Resource group | `rg-<app>-<env>` | Holds everything for one environment |
 | Device gateway | IoT Hub (F1, free) | `iot-<app>-<env>` | MQTT for devices; routes, direct methods, device twins |
-| Ingest | Function App (Linux, Consumption Y1, Python 3.11) | `func-<app>-<env>` | `telemetry_ingest` stores each message; `history_purge` trims history daily |
+| Ingest | Function App (Linux, Consumption Y1, Python 3.11) | `func-<app>-<env>` | `telemetry_ingest` stores each message; `device_lifecycle_trigger` tracks connect/disconnect; `offline_check` raises "Device offline"; `history_purge` trims history and old alerts daily |
+| Device events | Event Grid system topic (Basic, pay per operation) | `egst-iothub-<app>-<env>` | Sends IoT Hub connect/disconnect events to the Function |
 | API | App Service (Linux, F1, Python 3.11, FastAPI) | `app-<app>-<env>-<suffix>` | `/state`, `/telemetry`, `/command`, `/live`, `/twin` |
-| Storage | Storage account (Standard LRS) | `st<app><env><suffix>` | Tables `DeviceState`, `DeviceTelemetry`, `Alerts`; blob containers `telemetry-archive`, `dead-letter` |
+| Storage | Storage account (Standard LRS) | `st<app><env><suffix>` | Tables `DeviceState`, `DeviceTelemetry`, `Alerts`, `OfflinePending`; blob containers `telemetry-archive`, `dead-letter` |
 | Monitoring | Log Analytics (30-day retention, daily cap) + Application Insights + action group | `law-…`, `appi-…`, `ag-…` | Logs, traces, metrics, two alert rules that notify the API's alerts webhook, a workbook |
 
 `<app>` is `app_name` (default `ems1000`), `<env>` is `env_prefix` (e.g. `stg`), and
@@ -36,9 +37,17 @@ flowchart LR
     ingest --> history[("Table: DeviceTelemetry<br/>every message, 9 days")]
     ingest -- "unparseable message" --> dead[("Blob: dead-letter")]
     purge["Function: history_purge<br/>daily 01:15 UTC"] --> history
+    hub -- "connect / disconnect" --> eg["Event Grid system topic"]
+    eg --> life["Function: device_lifecycle_trigger"]
+    life -- "connection_status" --> state
+    life --> pending[("Table: OfflinePending")]
+    check["Function: offline_check<br/>every minute"] --> pending
+    check -- "Device offline after grace" --> alerts[("Table: Alerts")]
+    monitor["Azure Monitor alerts"] -- "webhook" --> api
     client["Mobile app or /docs"] -- "HTTPS" --> api["API: FastAPI on App Service (F1)"]
     api --> state
     api --> history
+    api --> alerts
     api -- "direct methods, device twin" --> hub
     ingest -.-> obs["Application Insights + Log Analytics"]
     api -.-> obs
@@ -68,6 +77,12 @@ The same picture as text, for viewers that don't render Mermaid:
                                   │ API: FastAPI on App Service (F1) │◄── HTTPS ── Mobile app, /docs
  IoT Hub ◄── direct methods, ─────┤                                  │
              device twin          └──────────────────────────────────┘
+
+ IoT Hub ── connect/disconnect ──► Event Grid ──► Function: device_lifecycle_trigger
+                                                     │ connection_status → DeviceState
+                                                     └ disconnected → Table: OfflinePending
+ Function: offline_check (every minute) ── still offline after grace ──► Table: Alerts ◄── API reads
+ Azure Monitor alerts ── webhook ──► API ──► Table: Alerts
 
  Function, API and IoT Hub all log to Application Insights + Log Analytics.
 ```

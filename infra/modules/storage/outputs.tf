@@ -23,3 +23,7 @@ output "telemetry_archive_container_name" {
 output "alerts_table_name" {
   value = azurerm_storage_table.alerts.name
 }
+
+output "offline_pending_table_name" {
+  value = azurerm_storage_table.offline_pending.name
+}

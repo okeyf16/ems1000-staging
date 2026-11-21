@@ -1,0 +1,27 @@
+name: Function tests
+
+on:
+  pull_request:
+    paths:
+      - "src/function/**"
+      - ".github/workflows/function-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "src/function/**"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Function helper tests (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/function
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest==8.3.4
+      - run: python -m pytest -q tests

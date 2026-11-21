@@ -42,6 +42,13 @@ resource "azurerm_linux_function_app" "function_app" {
     # Per-message history table and its retention (purged daily by history_purge)
     "HISTORY_TABLE_NAME"     = var.history_table_name
     "HISTORY_RETENTION_DAYS" = tostring(var.history_retention_days)
+
+    # Connection state from Event Grid: a device still disconnected after the grace period
+    # gets a "Device offline" alert in the Alerts table; resolved alerts are purged daily.
+    "ALERTS_TABLE_NAME"          = var.alerts_table_name
+    "OFFLINE_PENDING_TABLE_NAME" = var.offline_pending_table_name
+    "OFFLINE_GRACE_MINUTES"      = tostring(var.offline_grace_minutes)
+    "ALERTS_RETENTION_DAYS"      = tostring(var.alerts_retention_days)
   }
 
   lifecycle {

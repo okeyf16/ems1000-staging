@@ -42,3 +42,19 @@ variable "missing_telemetry_check_minutes" {
     error_message = "Use 1, 5, 10 or 15 minutes."
   }
 }
+
+variable "latency_alert_evaluation_periods" {
+  type        = number
+  description = "Consecutive 15-minute checks the latency alert looks at"
+  default     = 2
+}
+
+variable "latency_alert_failing_periods" {
+  type        = number
+  description = "How many of those checks must be slow before it fires"
+  default     = 2
+  validation {
+    condition     = var.latency_alert_failing_periods <= var.latency_alert_evaluation_periods
+    error_message = "latency_alert_failing_periods can't be more than latency_alert_evaluation_periods."
+  }
+}

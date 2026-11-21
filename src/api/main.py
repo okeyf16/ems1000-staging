@@ -180,6 +180,9 @@ def shape_state(device_id: str, fields: dict, source: str, received) -> dict:
             "sv": fields.get("sv"),
             "ts": fields.get("ts"),
             "device_time": _epoch_ms_to_wat(fields.get("ts")),
+            # From IoT Hub connect/disconnect events (Event Grid); null until the first event
+            "connection_status": fields.get("connection_status"),
+            "last_status_change": to_wat(fields.get("last_status_change")),
         },
     }
 
@@ -231,7 +234,8 @@ def get_device_state(device_id: str, live: bool = Query(
     `source` says which (`stored` or `device`), `age_s` how old it is. Readings include
     derived `soc_pct` (battery state of charge, estimated from voltage; `soc_reliable` is
     true only with the engine off) and `load_pct` (current / rated current).
-    Times are WAT (UTC+1)."""
+    `link.connection_status` (Online/Offline) and `link.last_status_change` come from IoT Hub
+    connect/disconnect events. Times are WAT (UTC+1)."""
     if live:
         result = _invoke_device_method(device_id, "get_status")
         payload = result["payload"] if isinstance(result["payload"], dict) else {}

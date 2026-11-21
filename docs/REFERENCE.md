@@ -49,7 +49,8 @@ add one hour to compare. Day boundaries for daily figures use midnight WAT (23:0
   },
   "status": { "run": 2, "run_state": "Running", "flt": 0, "faults": [], "warnings": [] },
   "link": { "rssi": -71, "boot": 7, "seq": 120, "sv": 1, "ts": 1795030205000,
-            "device_time": "2026-11-18T23:10:05+01:00" }
+            "device_time": "2026-11-18T23:10:05+01:00",
+            "connection_status": "Online", "last_status_change": "2026-11-18T22:58:41+01:00" }
 }
 ```
 
@@ -65,6 +66,7 @@ add one hour to compare. Day boundaries for daily figures use midnight WAT (23:0
 | status | `run`, `run_state` | 0 Off, 1 Cranking, 2 Running, 3 Stopping, 4 Fault |
 | status | `flt`, `faults`, `warnings` | The fault bitmask and its decoded names (see [the four non-reading fields](#the-four-non-reading-fields)) |
 | link | `rssi`, `boot`, `seq`, `sv`, `ts`, `device_time` | Connection and message bookkeeping; `device_time` is `ts` in WAT. A live reply only has what the device reports |
+| link | `connection_status`, `last_status_change` | `Online`/`Offline` from IoT Hub connect/disconnect events (Event Grid) and when it last changed (WAT). `null` until the device's first event, and in live replies. A power cut shows as Offline only once IoT Hub's keep-alive expires (about 1.5 × the device's MQTT keep-alive) |
 
 ### The four non-reading fields
 
@@ -86,6 +88,12 @@ complete the set.
 `id`, `device_id` (`null` for pipeline-wide alerts such as latency), `rule`, `severity`
 (`Sev0`–`Sev4`), `status` (`active` or `resolved`), `description`, `source`, `fired_at`,
 `resolved_at` (WAT). `status=active` lists only alerts still firing.
+
+| `rule` | `source` | Raised when | Resolves when |
+|---|---|---|---|
+| `alert-missing-telemetry-<env>` | `azure-monitor` | A device that sent in the last day has been silent for `missing_telemetry_silence_minutes` | It sends again (three clean checks) |
+| `alert-latency-<env>` | `azure-monitor` (`device_id` null) | p95 ingest latency over 60 s in `latency_alert_failing_periods` of `latency_alert_evaluation_periods` 15-minute checks (default 2 of 2) | A check is healthy again |
+| `device-offline` | `event-grid` | Disconnected (Event Grid) for `offline_grace_minutes` (default 2) | It reconnects, or sends telemetry (a missed Connected event) |
 
 ### Commands
 
@@ -134,7 +142,7 @@ so use `DELETE …/twin/settings` to clear from the test page.
 |---|---|
 | PartitionKey | Device ID (the telemetry `id` field) |
 | RowKey | `latest` (one row per device, overwritten by each message) |
-| Columns | Every telemetry field as sent (`sv`, `ts`, `boot`, `seq`, `v`, `i`, `f`, `fuel`, `oil`, `t`, `vb`, `flt`, `run`, `rssi`), plus `enqueued_time` (when IoT Hub received it, UTC) |
+| Columns | Every telemetry field as sent (`sv`, `ts`, `boot`, `seq`, `v`, `i`, `f`, `fuel`, `oil`, `t`, `vb`, `flt`, `run`, `rssi`), plus `enqueued_time` (when IoT Hub received it, UTC). From connection events: `connection_status`, `last_status_change` (UTC), `connection_seq` (IoT Hub's sequence number, so a late event can't overwrite a newer one) |
 
 `Timestamp` is reserved by Table Storage, so the receive time is stored as `enqueued_time`.
 Integers outside 32 bits (`ts`, epoch milliseconds) are stored as Int64.
@@ -156,11 +164,25 @@ message, so a retry overwrites rather than duplicates. `history_purge` deletes r
 | Key | Value |
 |---|---|
 | PartitionKey | Device ID from the alert's `device_id` dimension, or `_system` |
-| RowKey | The Azure Monitor alert ID (last path segment), so "Resolved" updates the row "Fired" created |
+| RowKey | The Azure Monitor alert ID (last path segment), so "Resolved" updates the row "Fired" created; `offline-<disconnect epoch ms>` for Device offline alerts |
 | Columns | `rule`, `severity`, `condition` (`Fired`/`Resolved`), `fired_at`, `resolved_at` (UTC), `description`, `signal_type`, `source`, `alert_id` |
 
-Written by the webhook (token in `ALERT_WEBHOOK_TOKEN`); read by `GET /api/alerts`.
-Predictive-maintenance alerts will be written here too.
+Written by the webhook (token in `ALERT_WEBHOOK_TOKEN`) and by the Function's `offline_check`;
+read by `GET /api/alerts`. `history_purge` deletes resolved alerts older than
+`ALERTS_RETENTION_DAYS` (30); active ones are kept. Predictive-maintenance alerts will be
+written here too.
+
+### Table `OfflinePending`: devices currently disconnected
+
+| Key | Value |
+|---|---|
+| PartitionKey | `pending` |
+| RowKey | Device ID |
+| Columns | `since` (disconnect time, UTC), `alerted` (has the Device offline alert been raised), `alert_row` (its RowKey in `Alerts`) |
+
+A row is added on DeviceDisconnected and removed on reconnect (or when telemetry shows the
+device is back). `offline_check` reads only this partition each minute, so its cost doesn't
+grow with the number of devices.
 
 ### Blob containers
 
@@ -189,8 +211,9 @@ Analytics.
 | Function | Trigger | Does |
 |---|---|---|
 | `telemetry_ingest` | Built-in events endpoint (`%IOTHUB_EVENTS_PATH%`) | Parses the JSON, upserts `DeviceState`, upserts a `DeviceTelemetry` row, records `ingest_latency_ms`; sends failures to `dead-letter` |
-| `history_purge` | Timer `0 15 1 * * *` (01:15 UTC daily) | Deletes `DeviceTelemetry` rows older than the retention |
-| `device_lifecycle_trigger` | Event Grid | Would set `connection_status` on connect/disconnect; not wired up ([known issue 5](RUNBOOK.md#known-issues)) |
+| `history_purge` | Timer `0 15 1 * * *` (01:15 UTC daily) | Deletes `DeviceTelemetry` rows older than the retention, and resolved alerts older than `ALERTS_RETENTION_DAYS` |
+| `device_lifecycle_trigger` | Event Grid subscription `device-lifecycle-to-function` (DeviceConnected, DeviceDisconnected) | Sets `connection_status`, `last_status_change`, `connection_seq` in `DeviceState`, ignoring events older than the stored sequence number. Disconnect: adds the device to `OfflinePending`. Connect: removes it and resolves its Device offline alert |
+| `offline_check` | Timer `0 */1 * * * *` (every minute) | For each `OfflinePending` row: if telemetry arrived after the disconnect, marks the device Online; else after `OFFLINE_GRACE_MINUTES` writes a `device-offline` alert. Logs only when it acts. Also keeps the Function warm, which cuts cold-start latency |
 
 ## App settings
 
@@ -205,8 +228,11 @@ in the repo.
 | `IOTHUB_EVENTS_PATH` | Event Hub-compatible name; must equal the `EntityPath` in the string above |
 | `AzureWebJobsStorage` | Storage account connection string (tables and dead-letter); set by the provider from the storage account name and key |
 | `HISTORY_TABLE_NAME`, `HISTORY_RETENTION_DAYS` | `DeviceTelemetry`, `9` |
+| `ALERTS_TABLE_NAME`, `ALERTS_RETENTION_DAYS` | `Alerts`, `30` |
+| `OFFLINE_PENDING_TABLE_NAME`, `OFFLINE_GRACE_MINUTES` | `OfflinePending`, `2` (`offline_grace_minutes`) |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | App Insights; set through `site_config` |
-| `WEBSITE_RUN_FROM_PACKAGE`, `WEBSITE_ENABLE_SYNC_UPDATE_SITE` | Set by the deploy workflow; Terraform ignores them |
+| `WEBSITE_RUN_FROM_PACKAGE` | Set by the deploy workflow; Terraform ignores it |
+| `WEBSITE_ENABLE_SYNC_UPDATE_SITE` | Added by the deploy workflow; may be missing until the next Function deploy (not needed at runtime); Terraform ignores it |
 
 **Web App (API)**
 
@@ -231,7 +257,8 @@ Start command: `gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 m
 | Log Analytics | 30-day retention, daily cap `daily_quota_gb` (1 GB) |
 | Application Insights | Workspace-based; Function and API send traces, exceptions, dependencies |
 | Custom metric | `ingest_latency_ms`: IoT Hub enqueue to Function processing |
-| Alert: latency | p95 `ingest_latency_ms` above 60 s over 15 min (severity 2) |
+| Alert: latency | p95 `ingest_latency_ms` above 60 s in `latency_alert_failing_periods` of the last `latency_alert_evaluation_periods` 15-minute checks (default 2 of 2, so about 30 min of slowness); severity 2; auto-resolves at the next healthy check. Set both to 1 for the old one-check behaviour |
+| Alert: device offline | Not an Azure Monitor rule: the Function writes it after `offline_grace_minutes` (2) of disconnection; severity 1; resolves on reconnect. About 2–4 min after a clean disconnect; after a power cut add IoT Hub's keep-alive timeout |
 | Alert: missing telemetry | One alert per device that sent telemetry in the last day but nothing for 5 min (`missing_telemetry_silence_minutes`), checked every 5 min (`missing_telemetry_check_minutes`); severity 1; based on the Function's per-message log line. Fires about 7–12 min after a device goes quiet and resolves about 15 min after it returns (Azure needs three clean checks). Keep the silence above 3× the heartbeat interval |
 | Action group | `ag-<app>-<env>`: both alerts call `https://<api>/api/alerts/azure-monitor?token=…` with the common alert schema |
 | Workbook | "EMS1000 Pipeline Health" (placeholder content) |

@@ -25,7 +25,7 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 |---|---|---|---|
 | S-01 | Apply succeeded with no surprises | HCP Terraform run | "Apply complete"; no resource replaced or destroyed unless intended |
 | S-02 | Routes in place | IoT Hub → **Message routing** | `telemetry-to-builtin` (endpoint `events`) and `telemetry-to-archive`, both enabled |
-| S-03 | App settings intact | Function App and Web App → **Environment variables** | Settings as in [REFERENCE.md](REFERENCE.md#app-settings); Function still has `WEBSITE_RUN_FROM_PACKAGE` |
+| S-03 | App settings intact | Function App and Web App → **Environment variables** | Settings as in [REFERENCE.md](REFERENCE.md#app-settings); Function still has `WEBSITE_RUN_FROM_PACKAGE` (`WEBSITE_ENABLE_SYNC_UPDATE_SITE` may be missing until the next Function deploy; that's fine) |
 | S-04 | Pipeline still flows | Run the simulator for 3 messages, then `GET /api/devices/<id>/state` | `enqueued_time` within the last minute |
 | S-05 | Alerts wired to the action group | Azure Monitor → **Alerts** → **Alert rules** | Both rules enabled, each with action group `ag-<app>-<env>`; the group has webhook `api-alerts` |
 | S-06 | Missing-telemetry alert fires | Send a few messages, stop the device for about 12 min | Monitor → **Alerts** shows a *Fired* alert for `<id>`; it resolves after the device sends again |
@@ -35,7 +35,7 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 | ID | Check | How | Expected |
 |---|---|---|---|
 | S-10 | Workflow green | GitHub **Actions** → *Deploy Azure Function* | All steps succeed |
-| S-11 | Functions indexed | Function App → **Overview** → Functions list | `telemetry_ingest`, `history_purge`, `device_lifecycle_trigger` |
+| S-11 | Functions indexed | Function App → **Overview** → Functions list | `telemetry_ingest`, `history_purge`, `device_lifecycle_trigger`, `offline_check` |
 | S-12 | Messages stored | Send 3 messages; `GET /api/devices/<id>/telemetry?limit=3` | 3 rows, newest first, `seq` increasing as you go back up |
 | S-13 | No errors | Logs: `exceptions \| where timestamp > ago(15m)` | No rows |
 | S-14 | Dead-letter path works (optional) | Send one non-JSON device message: `az iot device send-d2c-message --hub-name <hub> --device-id <id> --data 'not json'` | Blob appears under `dead-letter/YYYY/MM/DD/HH/` with the error and raw body |
@@ -83,6 +83,20 @@ Run by the tester, signed in with their guest account.
 | S-42 | Can set a twin and call a method | Device → **Device twin** edit desired; **Direct method** `get_status` (device online) | Saved; method returns (or 504-style timeout if offline) |
 | S-43 | Can't delete | Select their device → **Delete** | Refused: authorization failed (403) |
 | S-44 | Can't see keys | Hub → **Shared access policies** | Keys not shown / access denied |
+
+## Connection state and Device offline (after the Event Grid change)
+
+Rollout: merge (the Function deploys), then apply in HCP Terraform. Until the apply creates
+the `OfflinePending` table and the Event Grid subscription, `offline_check` simply skips.
+
+| ID | Check | How | Expected |
+|---|---|---|---|
+| S-45 | Event Grid wired | IoT Hub → **Events** | Subscription `device-lifecycle-to-function`, endpoint Azure Function `device_lifecycle_trigger`, event types *Device Connected* and *Device Disconnected* |
+| S-46 | Connect shows Online | Start the simulator; after about 1 min `GET …/state` | `link.connection_status: Online`, `last_status_change` a minute or so ago (WAT) |
+| S-47 | Disconnect shows Offline | Stop the simulator cleanly (Ctrl+C); after about 1 min `GET …/state` | `Offline` with a new `last_status_change` |
+| S-48 | Short gap: no alert | Restart the simulator within 1 min | No `device-offline` alert in `GET /api/alerts?device_id=<id>` |
+| S-49 | Long gap: alert, then resolved | Stop for about 4 min, then start again | `device-offline` appears `active` after about 2–3 min (`source: event-grid`); after the restart it shows `resolved` with `resolved_at` |
+| S-50 | Latency alert settings | Monitor → **Alert rules** → `alert-latency-<env>` | Condition shows *2 of 2* violations (number of evaluation periods 2); **Automatically resolve alerts** on |
 
 ## Command line alternative
 

@@ -13,3 +13,9 @@ variable "tags" { type = map(string) }
 
 variable "history_table_name" { type = string }
 variable "history_retention_days" { type = number }
+
+# Device connection state (Event Grid) and the "Device offline" alert
+variable "alerts_table_name" { type = string }
+variable "offline_pending_table_name" { type = string }
+variable "offline_grace_minutes" { type = number }
+variable "alerts_retention_days" { type = number }

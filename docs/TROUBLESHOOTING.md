@@ -23,7 +23,7 @@ Check each hop in order: device → hub → route → Function → table.
 | Device says "sent", hub **Metrics** show nothing | Metrics delay | Wait 10 min; granularity 1 minute, aggregation Sum |
 | Device can't connect at all | Wrong connection string, disabled device, or daily quota used up | Check the device identity is enabled; IoT Hub → **Metrics** → *Total number of messages used* (F1 stops at 8,000 until 00:00 UTC) |
 | Hub receives, but "Routing: messages delivered" is 0 or "dropped" rises | No route to the built-in endpoint. With any custom route defined, messages only go where a route sends them | Route `telemetry-to-builtin` (endpoint `events`) must exist and be enabled; re-apply Terraform |
-| Routed, but the Function never runs | Function not deployed or not indexed | Function App → Functions list must show `telemetry_ingest` and `history_purge`; if empty, see the next row |
+| Routed, but the Function never runs | Function not deployed or not indexed | Function App → Functions list must show `telemetry_ingest`, `history_purge`, `device_lifecycle_trigger` and `offline_check`; if empty, see the next row |
 | Functions list is empty after a deploy | Python packages failed to import (built for the wrong platform, or a missing dependency) | Packages must be built for `manylinux2014_x86_64` / CPython 3.11, as the workflow does. Look for `ModuleNotFoundError` or `ImportError` in `traces`/`exceptions` |
 | Function runs but the trigger never fires | `IOTHUB_EVENTS_PATH` doesn't match the `EntityPath` in `IOTHUB_EVENTS_CONNECTION_STRING` | Both come from Terraform; re-apply rather than editing by hand |
 | Runs fail with `can't subtract offset-naive and offset-aware datetimes` | The trigger's enqueue time has no timezone | Handled by `_as_utc` in the Function; redeploy if it reappears |
@@ -66,6 +66,18 @@ Check each hop in order: device → hub → route → Function → table.
 | "Clear settings" example arrives empty | FastAPI drops `null` from `/docs` examples | Use `DELETE …/twin/settings` |
 | 404 "not found in IoT Hub" | No device identity with that ID | Create it ([runbook](RUNBOOK.md#adding-a-device)) |
 | 502 "IoT Hub twin … failed" | Hub unreachable or the API's key is wrong (e.g. after rotation without an apply) | Re-apply Terraform; check `IOTHUB_CONNECTION_STRING` on the Web App |
+
+## Connection state and Device offline
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `link.connection_status` stays `null` | No connect/disconnect event yet, or the Event Grid subscription is missing | Restart the device once; check IoT Hub → **Events** for `device-lifecycle-to-function` |
+| Terraform apply fails creating the Event Grid subscription ("endpoint validation" / function not found) | The function wasn't deployed when the subscription was created | Merge so *Deploy Azure Function* runs, then re-run the HCP Terraform apply |
+| Status says Offline while the device is sending | A Connected event was missed | `offline_check` corrects it within a minute once telemetry arrives; nothing to do |
+| Offline shows several minutes after a power cut | IoT Hub waits for the MQTT keep-alive to expire before it reports the drop | Expected; use a 60–120 s keep-alive on devices |
+| Too many Device offline alerts from quick reconnects | Grace period shorter than typical blips | Raise `offline_grace_minutes` |
+| Device offline alert never resolves | Reconnect event missed and no telemetry since | It resolves on the next connect or message; if the device is really gone, it stays active (by design) |
+| Event Grid deliveries failing | Function errors or cold start timeouts | IoT Hub → **Events** → the subscription → **Metrics** (*Delivery failed*); Function `exceptions` in App Insights |
 
 ## Deploy workflows
 
