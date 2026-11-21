@@ -63,6 +63,31 @@ def test_stored_state_shape_and_wat(api):
     assert body["age_s"] >= 0
 
 
+def test_connection_status_from_event_grid(api):
+    api.state.rows[("ems-sim-01", "latest")] = stored_row(
+        connection_status="Offline", last_status_change="2026-11-21T17:41:32.1234567+00:00")
+    link = api.client.get("/api/devices/ems-sim-01/state", headers=api.headers).json()["link"]
+    assert link["connection_status"] == "Offline"
+    assert link["last_status_change"] == "2026-11-21T18:41:32+01:00"
+
+
+def test_connection_status_null_before_first_event(api):
+    api.state.rows[("ems-sim-01", "latest")] = stored_row()
+    link = api.client.get("/api/devices/ems-sim-01/state", headers=api.headers).json()["link"]
+    assert link["connection_status"] is None and link["last_status_change"] is None
+
+
+def test_offline_alert_from_function_is_listed(api):
+    # Row shape written by the Function's offline_check (lifecycle.offline_alert_row)
+    api.alerts.rows[("ems-sim-01", "offline-1795282892000")] = {
+        "PartitionKey": "ems-sim-01", "RowKey": "offline-1795282892000", "rule": "device-offline",
+        "severity": "Sev1", "condition": "Fired", "fired_at": "2026-11-21T17:41:32+00:00",
+        "description": "Device not connected to IoT Hub for at least 2 minutes.", "source": "event-grid"}
+    alerts = api.client.get("/api/alerts?device_id=ems-sim-01&status=active", headers=api.headers).json()["alerts"]
+    assert alerts[0]["rule"] == "device-offline" and alerts[0]["status"] == "active"
+    assert alerts[0]["fired_at"] == "2026-11-21T18:41:32+01:00" and alerts[0]["source"] == "event-grid"
+
+
 def test_faults_and_warnings_decoded(api):
     api.state.rows[("ems-sim-01", "latest")] = stored_row(flt=0b110001, run=4, oil=2)
     body = api.client.get("/api/devices/ems-sim-01/state", headers=api.headers).json()

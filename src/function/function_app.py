@@ -4,10 +4,13 @@ import logging
 import datetime
 import uuid
 import azure.functions as func
-from azure.data.tables import TableServiceClient, EntityProperty, EdmType
+from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
+from azure.data.tables import TableServiceClient, EntityProperty, EdmType, UpdateMode
 from azure.storage.blob import BlobServiceClient
 from azure.monitor.opentelemetry import configure_azure_monitor
 from opentelemetry import metrics
+
+import lifecycle
 
 # 1. Configure OpenTelemetry for Application Insights
 # Captures dependency tracing, exceptions, and worker logs[cite: 2].
@@ -23,7 +26,7 @@ latency_histogram = meter.create_histogram(
     description="Latency between IoT Hub enqueue and Function processing"
 )
 
-# 3. Initialize Azure Storage Clients
+# 3. Initialize Azure Storage Clients (one service client shared by all tables)
 # Using the default storage account connection string injected by Terraform.
 STORAGE_CONN_STR = os.getenv("AzureWebJobsStorage")
 TABLE_NAME = "DeviceState"
@@ -31,12 +34,20 @@ DEAD_LETTER_CONTAINER = "dead-letter"
 # Per-message history (one row per message, newest first); purged daily by history_purge
 HISTORY_TABLE_NAME = os.getenv("HISTORY_TABLE_NAME", "DeviceTelemetry")
 HISTORY_RETENTION_DAYS = int(os.getenv("HISTORY_RETENTION_DAYS", "9"))
+# Connection state (Event Grid) and the "Device offline" alert
+ALERTS_TABLE_NAME = os.getenv("ALERTS_TABLE_NAME", "Alerts")
+OFFLINE_PENDING_TABLE_NAME = os.getenv("OFFLINE_PENDING_TABLE_NAME", "OfflinePending")
+OFFLINE_GRACE_MINUTES = int(os.getenv("OFFLINE_GRACE_MINUTES", "2"))
+ALERTS_RETENTION_DAYS = int(os.getenv("ALERTS_RETENTION_DAYS", "30"))
 
 try:
-    table_client = TableServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR).get_table_client(table_name=TABLE_NAME)
+    table_service = TableServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR)
+    table_client = table_service.get_table_client(table_name=TABLE_NAME)
+    history_client = table_service.get_table_client(table_name=HISTORY_TABLE_NAME)
+    alerts_client = table_service.get_table_client(table_name=ALERTS_TABLE_NAME)
+    offline_client = table_service.get_table_client(table_name=OFFLINE_PENDING_TABLE_NAME)
     blob_service_client = BlobServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR)
     dead_letter_client = blob_service_client.get_container_client(DEAD_LETTER_CONTAINER)
-    history_client = TableServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR).get_table_client(table_name=HISTORY_TABLE_NAME)
 except Exception as e:
     logging.error(f"Failed to initialize Azure Storage clients: {e}")
 
@@ -165,16 +176,6 @@ def _ingest(event: func.EventHubEvent):
         except Exception as dl_error:
             logging.error(f"CRITICAL: Failed to write to dead-letter blob: {dl_error}")
 
-#########Eventgrid Module#######
-# Initialize Table Client (reusing connection string from environment)
-STORAGE_CONN_STR = os.getenv("AzureWebJobsStorage")
-TABLE_NAME = "DeviceState"
-
-try:
-    table_client = TableServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR).get_table_client(table_name=TABLE_NAME)
-except Exception as e:
-    logging.error(f"Failed to initialize Table client for Event Grid: {e}")
-
 #########History retention#######
 @app.timer_trigger(schedule="0 15 1 * * *", arg_name="timer", run_on_startup=False, use_monitor=True)
 def history_purge(timer: func.TimerRequest):
@@ -196,6 +197,15 @@ def history_purge(timer: func.TimerRequest):
                 deleted += len(batch)
         logging.info(f"history_purge: deleted {deleted} rows older than {cutoff.isoformat()} "
                      f"({HISTORY_RETENTION_DAYS} days) across {len(by_partition)} device(s)")
+
+        # Resolved alerts older than ALERTS_RETENTION_DAYS (active ones are always kept)
+        alert_cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=ALERTS_RETENTION_DAYS)
+        purged = 0
+        for alert in alerts_client.query_entities(query_filter="condition eq 'Resolved'"):
+            if lifecycle.purge_due(alert, alert_cutoff):
+                alerts_client.delete_entity(partition_key=alert["PartitionKey"], row_key=alert["RowKey"])
+                purged += 1
+        logging.info(f"history_purge: deleted {purged} resolved alerts older than {ALERTS_RETENTION_DAYS} days")
     except Exception:
         logging.exception("history_purge failed")
         raise
@@ -203,43 +213,95 @@ def history_purge(timer: func.TimerRequest):
 
 @app.event_grid_trigger(arg_name="event")
 def device_lifecycle_trigger(event: func.EventGridEvent):
-    """
-    Handles device connect and disconnect events routed from IoT Hub via Event Grid.
-    Updates the online/offline status in the DeviceState Table.
-    """
+    """IoT Hub connect/disconnect events (via Event Grid) -> connection_status in DeviceState.
+
+    A disconnect also opens an entry in OfflinePending; offline_check turns it into a
+    "Device offline" alert after OFFLINE_GRACE_MINUTES. A connect clears the entry and
+    resolves the alert. Late or out-of-order events (older sequence number) are ignored."""
     try:
-        event_data = event.get_json()
-        subject = event.subject  # Format: devices/<device_id>
-        event_type = event.event_type  # e.g., Microsoft.Devices.DeviceConnected / DeviceDisconnected
-        
-        # Extract device_id from the subject string
-        device_id = subject.split("/")[-1] if subject else "unknown_device"
-        
-        # Determine connection status based on event type
-        is_connected = "DeviceConnected" in event_type
-        status_string = "Online" if is_connected else "Offline"
-        
-        logging.info(f"Lifecycle event for device {device_id}: {status_string} (Type: {event_type})")
+        info = lifecycle.parse_event(event.event_type, event.subject, event.get_json(), event.event_time)
+        if info is None:
+            logging.info(f"Ignoring Event Grid event {event.event_type} for {event.subject}")
+            return
+        device_id = info["device_id"]
 
-        # Fetch existing entity or initialize a new one to preserve other telemetry fields
         try:
-            entity = table_client.get_entity(partition_key=device_id, row_key="latest")
-        except Exception:
-            # If no telemetry row exists yet, create a baseline entity
-            entity = {
-                "PartitionKey": device_id,
-                "RowKey": "latest"
-            }
+            stored = table_client.get_entity(partition_key=device_id, row_key="latest")
+        except ResourceNotFoundError:
+            stored = {}
+        if not lifecycle.is_newer(info["seq"], stored.get("connection_seq")):
+            logging.info(f"Stale lifecycle event for {device_id} ignored (seq {info['seq']})")
+            return
 
-        # Update connection status and timestamp
-        entity["connection_status"] = status_string
-        entity["last_status_change"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        table_client.upsert_entity(entity=lifecycle.status_patch(device_id, info), mode=UpdateMode.MERGE)
+        status = "Online" if info["online"] else "Offline"
+        logging.info(f"Connection status for {device_id}: {status} at {info['time'].isoformat()}")
 
-        # Upsert the updated state back into Table Storage[cite: 1, 2]
-        table_client.upsert_entity(entity=entity)
-        logging.info(f"Successfully updated connection status to {status_string} for {device_id}")
+        if info["online"]:
+            _clear_offline(device_id, info["time"])
+        else:
+            try:
+                # Keep an existing entry (and its alert) if a Connected event was missed
+                offline_client.create_entity(entity=lifecycle.pending_row(device_id, info["time"]))
+            except ResourceExistsError:
+                pass
+    except Exception:
+        logging.exception("Failed to process Event Grid lifecycle event")
+        raise
 
-    except Exception as e:
-        logging.error(f"Failed to process Event Grid lifecycle event: {e}")
-        raise e
 
+def _clear_offline(device_id, when):
+    """Device is back: resolve its offline alert (if one was raised) and drop the entry."""
+    try:
+        pending = offline_client.get_entity(partition_key=lifecycle.PENDING_PARTITION, row_key=device_id)
+    except ResourceNotFoundError:
+        return
+    if pending.get("alerted") and pending.get("alert_row"):
+        alerts_client.upsert_entity(
+            entity=lifecycle.resolved_patch(device_id, pending["alert_row"], when), mode=UpdateMode.MERGE)
+        logging.info(f"Device offline alert resolved for {device_id}")
+    offline_client.delete_entity(partition_key=lifecycle.PENDING_PARTITION, row_key=device_id)
+
+
+@app.timer_trigger(schedule="0 */1 * * * *", arg_name="timer", run_on_startup=False, use_monitor=False)
+def offline_check(timer: func.TimerRequest):
+    """Every minute: raise "Device offline" for devices disconnected longer than the grace
+    period, and clear entries for devices whose telemetry shows they're back. Reads only the
+    OfflinePending list, so the cost stays flat as the fleet grows. Logs only when it acts."""
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        try:
+            rows = list(offline_client.query_entities(
+                query_filter="PartitionKey eq @pk", parameters={"pk": lifecycle.PENDING_PARTITION}))
+        except ResourceNotFoundError:
+            return  # OfflinePending table not created yet (code deployed before the Terraform apply)
+        for row in rows:
+            device_id = row["RowKey"]
+            since = row.get("since")
+            try:
+                state = table_client.get_entity(partition_key=device_id, row_key="latest")
+            except ResourceNotFoundError:
+                state = {}
+            back_at = state.get("enqueued_time")
+            if lifecycle.telemetry_after(back_at, since):
+                # Telemetry after the disconnect: the Connected event was missed. Mark it
+                # online without touching connection_seq, so later events still apply.
+                table_client.upsert_entity(entity={
+                    "PartitionKey": device_id, "RowKey": "latest",
+                    "connection_status": "Online",
+                    "last_status_change": lifecycle.as_utc(back_at).isoformat(),
+                }, mode=UpdateMode.MERGE)
+                _clear_offline(device_id, back_at)
+                logging.info(f"{device_id} is sending telemetry again; marked Online")
+                continue
+            if not row.get("alerted") and lifecycle.is_due(since, now, OFFLINE_GRACE_MINUTES):
+                alert = lifecycle.offline_alert_row(device_id, since, OFFLINE_GRACE_MINUTES)
+                alerts_client.upsert_entity(entity=alert, mode=UpdateMode.MERGE)
+                offline_client.update_entity(entity={
+                    "PartitionKey": lifecycle.PENDING_PARTITION, "RowKey": device_id,
+                    "alerted": True, "alert_row": alert["RowKey"],
+                }, mode=UpdateMode.MERGE)
+                logging.warning(f"Device offline alert raised for {device_id} (disconnected since {since})")
+    except Exception:
+        logging.exception("offline_check failed")
+        raise

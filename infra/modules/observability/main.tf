@@ -19,16 +19,20 @@ resource "azurerm_application_insights" "appinsights" {
   tags                = var.tags
 }
 
-# Alert 1: High Ingestion Latency (p95 > 60 seconds)[cite: 1]
+# Alert 1: High ingestion latency (p95 > 60 seconds). Fires only when
+# latency_alert_failing_periods of the last latency_alert_evaluation_periods checks are slow
+# (default 2 of 2: two 15-minute checks in a row), so one cold start doesn't page; resolves
+# by itself once a check is healthy again.
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "latency_alert" {
   name                = "alert-latency-${var.env_prefix}"
   resource_group_name = var.resource_group_name
   location            = var.location
   scopes              = [azurerm_application_insights.appinsights.id]
-  description         = "Fires if ingestion latency p95 exceeds 60 seconds."
+  description         = "Fires if ingestion latency p95 exceeds 60 seconds in ${var.latency_alert_failing_periods} of ${var.latency_alert_evaluation_periods} consecutive 15-minute checks."
   severity            = 2
   evaluation_frequency = "PT15M"
   window_duration      = "PT15M"
+  auto_mitigation_enabled = true
 
   criteria {
     query                   = <<-KQL
@@ -40,6 +44,11 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "latency_alert" {
     threshold               = 60000 # 60 seconds in ms
     operator                = "GreaterThan"
     metric_measure_column   = "p95_latency"
+
+    failing_periods {
+      minimum_failing_periods_to_trigger_alert = var.latency_alert_failing_periods
+      number_of_evaluation_periods             = var.latency_alert_evaluation_periods
+    }
   }
 
   action {

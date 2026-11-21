@@ -135,6 +135,8 @@ authenticate: do it in a quiet window and apply straight away.
 | Every message | Table `DeviceTelemetry` | 9 days (`history_retention_days`) | `history_purge`, daily 01:15 UTC |
 | Raw messages | Blob `telemetry-archive` | 30 days (`archive_retention_days`) | Storage lifecycle rule |
 | Unparseable messages | Blob `dead-letter` | Indefinitely (no rule yet) | Function |
+| Resolved alerts | Table `Alerts` | 30 days (`alerts_retention_days`); active alerts kept | `history_purge`, daily 01:15 UTC |
+| Disconnected devices | Table `OfflinePending` | Until the device reconnects | Function |
 | Logs and traces | Log Analytics / App Insights | 30 days, capped at `daily_quota_gb` (1 GB) per day | Terraform |
 
 ## Costs and free-tier limits
@@ -147,6 +149,7 @@ The pilot is designed to cost close to nothing. The limits that matter:
 | App Service F1 | No always-on (cold start after idle), 1 GB disk, a daily CPU quota | The API is stopped for the rest of the day if the quota is used | B1 (always-on enables itself; see `app_service` module) |
 | Functions Consumption | Monthly free grant of executions and GB-seconds | Billed per use beyond it | Flex Consumption or Premium |
 | Log Analytics | Daily cap 1 GB | Ingestion stops until the next day | Raise `daily_quota_gb` |
+| Event Grid (Basic) | 100,000 operations a month free (each event = publish + delivery) | Billed per million operations beyond it; staging stays far below | No change needed until thousands of devices |
 
 Message budget: a device sending every 60 s uses 1,440 messages a day, so F1 carries about five
 devices. Direct methods, twin reads and twin updates count against the same 8,000. The device
@@ -163,6 +166,21 @@ Cost Management → **Cost analysis** filtered to `<rg>`.
 | Infrastructure | Revert the PR, let HCP Terraform plan, check it only undoes your change, then apply |
 | A bad app setting changed by hand in the portal | Run an HCP Terraform plan and apply: Terraform restores what the code says (except `WEBSITE_RUN_FROM_PACKAGE`, which it ignores on purpose) |
 
+## Tuning alerts
+
+All in `infra/variables.tf` (or a workspace variable in HCP Terraform); apply to change.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `missing_telemetry_silence_minutes` | 5 | Silence before the missing-telemetry alert counts a device as quiet |
+| `missing_telemetry_check_minutes` | 5 | How often that rule runs (1, 5, 10 or 15) |
+| `offline_grace_minutes` | 2 | How long a device may stay disconnected before **Device offline** is raised. Raise it if quick reconnects (Wi-Fi blips, simulator restarts) cause noise |
+| `latency_alert_evaluation_periods` / `latency_alert_failing_periods` | 2 / 2 | The latency alert fires when that many of the last 15-minute checks are slow; 1 / 1 fires on any single slow check |
+| `alerts_retention_days` | 30 | How long resolved alerts stay in the `Alerts` table |
+
+Devices should use an MQTT keep-alive of 60–120 s. IoT Hub only notices an unclean drop (power
+cut) after about 1.5 × the keep-alive, so that time adds to `offline_grace_minutes`.
+
 ## Known issues
 
 | # | Issue | Effect | Suggested fix | Status |
@@ -171,12 +189,12 @@ Cost Management → **Cost analysis** filtered to `<rg>`.
 | 2 | The API has no authentication | Anyone with the URL can read data and send start/stop commands | Add an API key or Microsoft Entra ID sign-in before the URL is shared outside the team | **Fixed:** `X-API-Key` required on every endpoint except `/healthz`; two Terraform-generated keys. Move to Entra ID sign-in before customers |
 | 3 | The two alert rules have no action group | They fire in the portal but notify nobody | Add an `azurerm_monitor_action_group` (email or push) and attach it to both rules | **Fixed:** action group `ag-<app>-<env>` calls the API's alerts webhook; alerts land in the `Alerts` table (shown once the API and panel changes ship) |
 | 4 | The missing-telemetry alert counts a custom event `DeviceTelemetry` that the Function doesn't emit | The alert can't work as intended (it may fire constantly or never) | Base it on `traces` from `telemetry_ingest`, or have the Function emit that event per message | **Fixed:** rebuilt on the Function's per-message log line; one alert per silent device, auto-resolves |
-| 5 | `device_lifecycle_trigger` (Event Grid) has no Event Grid subscription in Terraform | It never runs, so `connection_status` in `DeviceState` is never set. Connection state is available from the twin (`GET /twin`) | Add the Event Grid system topic and subscription for IoT Hub connect/disconnect events, or remove the trigger | Open (planned: wire up) |
+| 5 | `device_lifecycle_trigger` (Event Grid) has no Event Grid subscription in Terraform | It never runs, so `connection_status` in `DeviceState` is never set. Connection state is available from the twin (`GET /twin`) | Add the Event Grid system topic and subscription for IoT Hub connect/disconnect events, or remove the trigger | **Fixed:** system topic `egst-iothub-<app>-<env>` and subscription `device-lifecycle-to-function`; `/state` shows `connection_status`; Device offline alert after a grace period |
 | 6 | The Function and the API both use the `iothubowner` policy (full rights) | A leaked setting gives full control of the hub | Separate policies: the API with *service connect* + *registry read/write*, the Function with *service connect* only | Open |
 
 Smaller tidy-ups: the `scaffold..yml` workflow was a one-off and can be removed; some Terraform
-comments carry leftover `[cite: n]` markers; the Function initialises its `DeviceState` client
-twice.
+comments carry leftover `[cite: n]` markers. (The Function's duplicate `DeviceState` client
+was removed with the Event Grid change.)
 
 **Time zones:** everything in Azure (tables, logs, alerts, schedules) is UTC; the API, panel and
 app show WAT (UTC+1). The purge at 01:15 UTC is 02:15 WAT; the IoT Hub quota resets at
