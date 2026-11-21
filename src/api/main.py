@@ -4,7 +4,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Security
-from fastapi.security import APIKeyHeader
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader, HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 from azure.data.tables import TableServiceClient, EntityProperty, UpdateMode
 from azure.iot.hub import IoTHubRegistryManager
@@ -22,8 +24,48 @@ app = FastAPI(
         "Every endpoint except /healthz needs an API key in the X-API-Key header "
         "(use Authorize above). Times are West Africa Time (WAT, UTC+1); Azure itself stores UTC."
     ),
+    # The docs pages are served below behind their own password (DOCS_PASSWORD)
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 logger = logging.getLogger(__name__)
+
+# ---- API docs sign-in -----------------------------------------------------------------
+# /docs, /redoc and /openapi.json ask for a username and password (HTTP Basic), set by
+# Terraform in DOCS_USERNAME / DOCS_PASSWORD. API calls are unaffected: they need X-API-Key.
+# With no DOCS_PASSWORD (local runs) the docs stay open.
+DOCS_REALM = "EMS1000 API docs"
+docs_basic = HTTPBasic(auto_error=False, realm=DOCS_REALM)
+
+
+def require_docs_login(credentials: HTTPBasicCredentials | None = Depends(docs_basic)):
+    password = os.getenv("DOCS_PASSWORD", "")
+    if not password:
+        return
+    username = os.getenv("DOCS_USERNAME", "ems-docs")
+    ok = credentials is not None and (
+        hmac.compare_digest(credentials.username.encode(), username.encode())
+        & hmac.compare_digest(credentials.password.encode(), password.encode()))
+    if not ok:
+        raise HTTPException(status_code=401, detail="Sign in to see the API docs.",
+                            headers={"WWW-Authenticate": f'Basic realm="{DOCS_REALM}"'})
+
+
+@app.get("/openapi.json", include_in_schema=False, dependencies=[Depends(require_docs_login)])
+def openapi_schema():
+    return JSONResponse(app.openapi())
+
+
+@app.get("/docs", include_in_schema=False, dependencies=[Depends(require_docs_login)])
+def swagger_docs():
+    return get_swagger_ui_html(openapi_url="/openapi.json", title="EMS1000 API docs",
+                               swagger_ui_parameters={"persistAuthorization": False})
+
+
+@app.get("/redoc", include_in_schema=False, dependencies=[Depends(require_docs_login)])
+def redoc_docs():
+    return get_redoc_html(openapi_url="/openapi.json", title="EMS1000 API docs")
 
 # 2. Load Environment Variables injected by Terraform
 STORAGE_CONN_STR = os.getenv("STORAGE_CONN_STR")

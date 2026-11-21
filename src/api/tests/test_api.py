@@ -46,6 +46,29 @@ def test_docs_offer_authorize(api):
     assert "/api/alerts/azure-monitor" not in schema["paths"]
 
 
+def test_docs_need_password_when_set(api, monkeypatch):
+    import base64
+    monkeypatch.setenv("DOCS_USERNAME", "ems-docs")
+    monkeypatch.setenv("DOCS_PASSWORD", "docs-pass-123")
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        r = api.client.get(path)
+        assert r.status_code == 401 and r.headers["www-authenticate"].startswith("Basic")
+    wrong = base64.b64encode(b"ems-docs:nope").decode()
+    assert api.client.get("/docs", headers={"Authorization": f"Basic {wrong}"}).status_code == 401
+    good = base64.b64encode(b"ems-docs:docs-pass-123").decode()
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert api.client.get(path, headers={"Authorization": f"Basic {good}"}).status_code == 200
+
+
+def test_docs_password_does_not_replace_api_key(api, monkeypatch):
+    import base64
+    monkeypatch.setenv("DOCS_PASSWORD", "docs-pass-123")
+    good = base64.b64encode(b"ems-docs:docs-pass-123").decode()
+    r = api.client.get("/api/alerts", headers={"Authorization": f"Basic {good}"})
+    assert r.status_code == 401                 # docs login alone opens no API endpoint
+    assert api.client.get("/healthz").status_code == 200
+
+
 # ---- /state ----------------------------------------------------------------------------
 def test_stored_state_shape_and_wat(api):
     api.state.rows[("ems-sim-01", "latest")] = stored_row()
