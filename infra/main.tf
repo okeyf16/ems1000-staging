@@ -141,6 +141,14 @@ module "app_service" {
   alerts_table_name                 = module.storage.alerts_table_name
   alert_webhook_token               = random_password.alert_webhook_token.result
   api_keys                          = [random_password.api_key["primary"].result, random_password.api_key["secondary"].result]
+  docs_password                     = random_password.docs_password.result
+}
+
+# Password for the API docs pages (shared with the team; stage 2 moves the docs to
+# Microsoft Entra sign-in). Rotate: HCP Terraform -> new run -> replace this resource.
+resource "random_password" "docs_password" {
+  length  = 24
+  special = false
 }
 
 # API keys for the X-API-Key header. Two, so one can be replaced while clients use the other:

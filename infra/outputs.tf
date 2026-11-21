@@ -18,3 +18,9 @@ output "api_keys" {
   value       = { for name, key in random_password.api_key : name => key.result }
   sensitive   = true
 }
+
+output "docs_login" {
+  description = "Username and password for the API docs pages (/docs, /redoc, /openapi.json)"
+  value       = { username = "ems-docs", password = random_password.docs_password.result }
+  sensitive   = true
+}

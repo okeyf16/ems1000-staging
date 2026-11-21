@@ -79,3 +79,15 @@ variable "api_keys" {
   description = "API keys accepted in the X-API-Key header (two, so one can be rotated at a time)"
   sensitive   = true
 }
+
+variable "docs_username" {
+  type        = string
+  description = "Username for the API docs pages (/docs, /redoc, /openapi.json)"
+  default     = "ems-docs"
+}
+
+variable "docs_password" {
+  type        = string
+  description = "Password for the API docs pages; API calls still need X-API-Key"
+  sensitive   = true
+}

@@ -113,6 +113,14 @@ service-connect-only access policy you create for them (revocable) used with `--
 Revoke: remove their line and apply, or delete the guest account (which removes its role
 assignments too).
 
+## Sharing the API docs
+
+Send a teammate three things, each by a private channel (never in a repo, issue or PR):
+the docs URL (`<api-base-url>/docs`), the docs login (output `docs_login`), and, if they need
+to call the API, one API key (output `api_keys`). In the HCP Terraform workspace: **States** →
+latest → **Outputs** → reveal the sensitive value. For the simulator panel's own sharing (PINs),
+see the device-sim README, *Sharing the panel*.
+
 ## Rotating keys
 
 | Key | How | After |
@@ -123,6 +131,7 @@ assignments too).
 | Automation service principal | Create a new client secret | Update `AZURE_CREDENTIALS` in GitHub and `ARM_CLIENT_SECRET` in HCP Terraform |
 | API keys | HCP Terraform → new run → replace `random_password.api_key["secondary"]`; move clients to it; later replace `primary` the same way | Clients keep working on the other key throughout. Read keys from the sensitive output `api_keys` or Web App → **Environment variables** → `API_KEYS` |
 | Alert webhook token | HCP Terraform → new run → replace `random_password.alert_webhook_token` | The apply updates both the API setting and the action group's webhook URL together |
+| API docs password | HCP Terraform → new run → replace `random_password.docs_password` | Send the new password (output `docs_login`) to the team; the API itself is unaffected |
 
 Between regenerating a hub or storage key and the apply, the Function and API fail to
 authenticate: do it in a quiet window and apply straight away.
