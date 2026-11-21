@@ -69,6 +69,14 @@ Check each hop in order: device → hub → route → Function → table.
 | 404 "not found in IoT Hub" | No device identity with that ID | Create it ([runbook](RUNBOOK.md#adding-a-device)) |
 | 502 "IoT Hub twin … failed" | Hub unreachable or the API's key is wrong (e.g. after rotation without an apply) | Re-apply Terraform; check `IOTHUB_CONNECTION_STRING` on the Web App |
 
+## IoT Hub quota
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Portal banner "You've reached your daily message quota"; devices get 403 | 8,000 messages used today (telemetry, method calls and twin traffic in 0.5 KB blocks, all devices and the API together) | Wait for 00:00 UTC (01:00 WAT). Find the cause: IoT Hub → **Metrics** split by type, and the `Connections` query in the runbook |
+| Thousands of `deviceConnect`/`deviceDisconnect` in a few minutes | Two clients with the same device ID knocking each other off | Stop the extra client (simulator copy, container, another Codespace). The simulator now refuses a second copy and stops itself on a reconnect loop |
+| Quota alert at 70 % early in the day | Short heartbeat interval, frequent `?live=true` or twin calls, or a loop | Check the metrics; use `--interval 60` on the simulator |
+
 ## Connection state and Device offline
 
 | Symptom | Likely cause | Fix |
