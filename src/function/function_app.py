@@ -39,6 +39,8 @@ ALERTS_TABLE_NAME = os.getenv("ALERTS_TABLE_NAME", "Alerts")
 OFFLINE_PENDING_TABLE_NAME = os.getenv("OFFLINE_PENDING_TABLE_NAME", "OfflinePending")
 OFFLINE_GRACE_MINUTES = int(os.getenv("OFFLINE_GRACE_MINUTES", "2"))
 ALERTS_RETENTION_DAYS = int(os.getenv("ALERTS_RETENTION_DAYS", "30"))
+# Who called the API, one row per caller per UTC day (written by the API)
+ACCESS_TABLE_NAME = os.getenv("ACCESS_TABLE_NAME", "ApiAccess")
 
 try:
     table_service = TableServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR)
@@ -46,6 +48,7 @@ try:
     history_client = table_service.get_table_client(table_name=HISTORY_TABLE_NAME)
     alerts_client = table_service.get_table_client(table_name=ALERTS_TABLE_NAME)
     offline_client = table_service.get_table_client(table_name=OFFLINE_PENDING_TABLE_NAME)
+    access_client = table_service.get_table_client(table_name=ACCESS_TABLE_NAME)
     blob_service_client = BlobServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR)
     dead_letter_client = blob_service_client.get_container_client(DEAD_LETTER_CONTAINER)
 except Exception as e:
@@ -206,6 +209,18 @@ def history_purge(timer: func.TimerRequest):
                 alerts_client.delete_entity(partition_key=alert["PartitionKey"], row_key=alert["RowKey"])
                 purged += 1
         logging.info(f"history_purge: deleted {purged} resolved alerts older than {ALERTS_RETENTION_DAYS} days")
+
+        # API access rows (PartitionKey = UTC day) older than the same retention
+        access_cutoff = alert_cutoff.strftime("%Y-%m-%d")
+        dropped = 0
+        try:
+            for row in access_client.query_entities(query_filter="PartitionKey lt @cut",
+                                                    parameters={"cut": access_cutoff}):
+                access_client.delete_entity(partition_key=row["PartitionKey"], row_key=row["RowKey"])
+                dropped += 1
+        except ResourceNotFoundError:
+            pass  # table not created yet
+        logging.info(f"history_purge: deleted {dropped} API access rows before {access_cutoff}")
     except Exception:
         logging.exception("history_purge failed")
         raise

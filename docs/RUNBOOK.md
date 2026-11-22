@@ -113,13 +113,42 @@ service-connect-only access policy you create for them (revocable) used with `--
 Revoke: remove their line and apply, or delete the guest account (which removes its role
 assignments too).
 
-## Sharing the API docs
+## Microsoft sign-in
 
-Send a teammate three things, each by a private channel (never in a repo, issue or PR):
-the docs URL (`<api-base-url>/docs`), the docs login (output `docs_login`), and, if they need
-to call the API, one API key (output `api_keys`). In the HCP Terraform workspace: **States** →
-latest → **Outputs** → reveal the sensitive value. For the simulator panel's own sharing (PINs),
-see the device-sim README, *Sharing the panel*.
+### One-time setup (before the first apply that adds it)
+
+Terraform creates the API's Entra app registration, so its service principal (the one HCP
+Terraform signs in as) needs permission to create app registrations it then owns:
+
+1. Entra admin center → **App registrations** → **All applications** → the HCP Terraform app
+   (the one in the workspace's `ARM_CLIENT_ID`).
+2. **API permissions** → **Add a permission** → **Microsoft Graph** → **Application permissions**
+   → `Application.ReadWrite.OwnedBy` → **Add permissions**.
+3. **Grant admin consent for <tenant>** → Yes. The status shows a green tick.
+
+It can then manage only the app registrations it created (here, "EMS1000 API (stg)"). The
+`azuread` provider uses the same credentials as `azurerm` (the workspace's `ARM_*` variables).
+
+### Who can sign in
+
+Anyone with an account in the tenant, guests included. To add someone (e.g. Emeka): invite them
+as a guest or create a member account; nothing changes in Terraform. To limit access to named
+people later: assign them the **EMS API user** role (Enterprise applications → EMS1000 API (stg)
+→ **Users and groups** → **Add user/group**), then set `api_require_role_assignment = true` and
+apply.
+
+### Seeing who uses the API
+
+`GET /api/access` (or **API users today** on the simulator panel): each person signed in with
+Microsoft and each API key, with calls today, when last seen and the last endpoint. Full detail
+per request is in App Insights.
+
+## Sharing the API
+
+Paul, Emeka or anyone in the tenant: send the docs URL (`<api-base-url>/docs`); they sign in
+with their own Microsoft account. Only machines need an API key (output `api_keys`): send one
+by a private channel, never in a repo, issue or PR. For the simulator panel's own sharing
+(named PINs), see the device-sim README, *Sharing the panel*.
 
 ## Rotating keys
 
@@ -131,7 +160,7 @@ see the device-sim README, *Sharing the panel*.
 | Automation service principal | Create a new client secret | Update `AZURE_CREDENTIALS` in GitHub and `ARM_CLIENT_SECRET` in HCP Terraform |
 | API keys | HCP Terraform → new run → replace `random_password.api_key["secondary"]`; move clients to it; later replace `primary` the same way | Clients keep working on the other key throughout. Read keys from the sensitive output `api_keys` or Web App → **Environment variables** → `API_KEYS` |
 | Alert webhook token | HCP Terraform → new run → replace `random_password.alert_webhook_token` | The apply updates both the API setting and the action group's webhook URL together |
-| API docs password | HCP Terraform → new run → replace `random_password.docs_password` | Send the new password (output `docs_login`) to the team; the API itself is unaffected |
+| Microsoft sign-in secret | Automatic: a normal apply replaces it every 180 days (`time_rotating.api_secret`); to force it, replace `azuread_application_password.api` | App Service picks up the new secret; signed-in people may need to sign in again |
 
 Between regenerating a hub or storage key and the apply, the Function and API fail to
 authenticate: do it in a quiet window and apply straight away.

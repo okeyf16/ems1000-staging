@@ -3,15 +3,17 @@ import os
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Security
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, Security
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import APIKeyHeader, HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 from azure.data.tables import TableServiceClient, EntityProperty, UpdateMode
 from azure.iot.hub import IoTHubRegistryManager
 from azure.iot.hub.models import CloudToDeviceMethod, Twin, TwinProperties
 from azure.monitor.opentelemetry import configure_azure_monitor
+
+from access import AccessRecorder, Caller, entra_caller, entra_enabled, key_caller
 
 # 1. Configure OpenTelemetry for Application Insights
 # This automatically intercepts incoming requests, Table SDK calls, and IoT Hub SDK calls.
@@ -32,14 +34,33 @@ app = FastAPI(
 logger = logging.getLogger(__name__)
 
 # ---- API docs sign-in -----------------------------------------------------------------
-# /docs, /redoc and /openapi.json ask for a username and password (HTTP Basic), set by
-# Terraform in DOCS_USERNAME / DOCS_PASSWORD. API calls are unaffected: they need X-API-Key.
-# With no DOCS_PASSWORD (local runs) the docs stay open.
+# /docs, /redoc and /openapi.json: with ENTRA_SIGNIN=true (staging) anyone signed in to the
+# tenant with Microsoft; otherwise HTTP Basic from DOCS_USERNAME / DOCS_PASSWORD if set
+# (local runs without either: open). API calls always need sign-in or X-API-Key.
 DOCS_REALM = "EMS1000 API docs"
 docs_basic = HTTPBasic(auto_error=False, realm=DOCS_REALM)
 
 
-def require_docs_login(credentials: HTTPBasicCredentials | None = Depends(docs_basic)):
+class _SignInRedirect(Exception):
+    """Raised by require_docs_login to send a browser to the Microsoft sign-in page."""
+
+    def __init__(self, target: str):
+        self.target = target
+
+
+@app.exception_handler(_SignInRedirect)
+def _sign_in_redirect(_request: Request, exc: _SignInRedirect):
+    return RedirectResponse(url=exc.target, status_code=302)
+
+
+def require_docs_login(request: Request, credentials: HTTPBasicCredentials | None = Depends(docs_basic)):
+    # With Microsoft sign-in on, anyone signed in to the tenant sees the docs
+    if entra_enabled():
+        if entra_caller(request.headers):
+            return
+        if request.url.path == "/openapi.json":
+            raise HTTPException(status_code=401, detail="Sign in at /docs first.")
+        raise _SignInRedirect(f"/.auth/login/aad?post_login_redirect_uri={request.url.path}")
     password = os.getenv("DOCS_PASSWORD", "")
     if not password:
         return
@@ -99,26 +120,43 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize alerts table client: {e}")
 
+# Who called the API (one row per caller per UTC day); see access.py
+ACCESS_TABLE_NAME = os.getenv("ACCESS_TABLE_NAME", "ApiAccess")
+access_client = None
+try:
+    access_client = TableServiceClient.from_connection_string(conn_str=STORAGE_CONN_STR).get_table_client(table_name=ACCESS_TABLE_NAME)
+except Exception as e:
+    logger.error(f"Failed to initialize access table client: {e}")
+recorder = AccessRecorder(access_client)
+
 
 # ---- API key ------------------------------------------------------------------------
-# API_KEYS holds one or more keys, comma-separated (Terraform sets two so either can be
-# rotated without downtime). No keys configured = every protected call is refused.
+# Who may call: people in the tenant signed in with Microsoft (App Service authentication,
+# ENTRA_SIGNIN=true), or machines (simulator panel, mobile app) with X-API-Key. API_KEYS holds
+# one or more keys, comma-separated (Terraform sets two so either can be rotated).
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False,
-                              description="API key (Terraform output api_keys)")
+                              description="API key (Terraform output api_keys); not needed after Microsoft sign-in")
 
 
 def _configured_keys() -> list[str]:
     return [k.strip() for k in os.getenv("API_KEYS", "").split(",") if k.strip()]
 
 
-def require_api_key(key: str | None = Security(api_key_header)) -> None:
-    keys = _configured_keys()
-    if not keys:
-        logger.error("API_KEYS is not set; refusing all protected requests")
-        raise HTTPException(status_code=503, detail="API keys are not configured on the server.")
-    if not key or not any(hmac.compare_digest(key.encode(), k.encode()) for k in keys):
-        raise HTTPException(status_code=401, detail="Missing or invalid API key (X-API-Key header).",
-                            headers={"WWW-Authenticate": "ApiKey"})
+def require_api_key(request: Request, key: str | None = Security(api_key_header)) -> Caller:
+    caller = entra_caller(request.headers)
+    if caller is None:
+        keys = _configured_keys()
+        if not keys:
+            logger.error("API_KEYS is not set; refusing all protected requests")
+            raise HTTPException(status_code=503, detail="API keys are not configured on the server.")
+        index = next((n for n, k in enumerate(keys) if key and hmac.compare_digest(key.encode(), k.encode())), None)
+        if index is None:
+            hint = " or sign in with Microsoft at /docs" if entra_enabled() else ""
+            raise HTTPException(status_code=401, detail=f"Missing or invalid API key (X-API-Key header){hint}.",
+                                headers={"WWW-Authenticate": "ApiKey"})
+        caller = key_caller(index)
+    recorder.record(caller, f"{request.method} {request.url.path}")
+    return caller
 
 
 # Every device and alert endpoint goes on this router, so none can skip the key check.
@@ -442,6 +480,22 @@ def receive_azure_monitor_alert(token: str = Query(""), body: dict = Body(...)):
         raise HTTPException(status_code=500, detail="Could not store the alert.")
     logger.info(f"Alert {row['condition']} stored: {row['rule']} ({row['PartitionKey']})")
     return {"stored": True, "id": row["RowKey"], "device_id": row["PartitionKey"], "condition": row["condition"]}
+
+
+@api.get("/api/whoami")
+def whoami(caller: Caller = Depends(require_api_key)):
+    """Who the API thinks you are: your Microsoft account, or which API key you used."""
+    return {"who": caller.who, "kind": caller.kind}
+
+
+@api.get("/api/access")
+def list_access(days: int = Query(1, ge=1, le=7, description="Today (UTC) and the days before it")):
+    """Who called the API: people signed in with Microsoft and each API key, with calls,
+    last seen (WAT) and the last endpoint. Counts are batched, so they can lag by a minute."""
+    users = recorder.summary(days)
+    for u in users:
+        u["last_seen"] = to_wat(u["last_seen"])
+    return {"days": days, "count": len(users), "users": users}
 
 
 @api.get("/api/alerts")

@@ -17,7 +17,8 @@ commands and settings back to the device.
 | Device gateway | IoT Hub (F1, free) | `iot-<app>-<env>` | MQTT for devices; routes, direct methods, device twins |
 | Ingest | Function App (Linux, Consumption Y1, Python 3.11) | `func-<app>-<env>` | `telemetry_ingest` stores each message; `device_lifecycle_trigger` tracks connect/disconnect; `offline_check` raises "Device offline"; `history_purge` trims history and old alerts daily |
 | Device events | Event Grid system topic (Basic, pay per operation) | `egst-iothub-<app>-<env>` | Sends IoT Hub connect/disconnect events to the Function |
-| API | App Service (Linux, F1, Python 3.11, FastAPI) | `app-<app>-<env>-<suffix>` | `/state`, `/telemetry`, `/command`, `/live`, `/twin` |
+| API | App Service (Linux, F1, Python 3.11, FastAPI) | `app-<app>-<env>-<suffix>` | `/state`, `/telemetry`, `/command`, `/twin`, `/alerts`, `/access`; Microsoft sign-in for people, API key for machines |
+| Sign-in | Entra app registration (this tenant only) | `EMS1000 API (<env>)` | App Service authentication for the API; "EMS API user" role for later |
 | Storage | Storage account (Standard LRS) | `st<app><env><suffix>` | Tables `DeviceState`, `DeviceTelemetry`, `Alerts`, `OfflinePending`; blob containers `telemetry-archive`, `dead-letter` |
 | Monitoring | Log Analytics (30-day retention, daily cap) + Application Insights + action group | `law-…`, `appi-…`, `ag-…` | Logs, traces, metrics, two alert rules that notify the API's alerts webhook, a workbook |
 

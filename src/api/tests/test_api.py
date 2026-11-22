@@ -220,3 +220,59 @@ def test_alerts_filter_by_device(api):
 
 def test_alerts_status_validated(api):
     assert api.client.get("/api/alerts?status=bogus", headers=api.headers).status_code == 422
+
+
+# ---- Microsoft sign-in and who's calling ---------------------------------------------------
+import base64 as _b64  # noqa: E402
+import json as _json  # noqa: E402
+
+PAUL = {"X-MS-CLIENT-PRINCIPAL-ID": "0b6e-paul-oid", "X-MS-CLIENT-PRINCIPAL-NAME": "paul@example.com",
+        "X-MS-CLIENT-PRINCIPAL": _b64.b64encode(_json.dumps(
+            {"claims": [{"typ": "name", "val": "Paul Somoye"}]}).encode()).decode()}
+
+
+def test_signed_in_person_needs_no_key(api, monkeypatch):
+    monkeypatch.setenv("ENTRA_SIGNIN", "true")
+    r = api.client.get("/api/whoami", headers=PAUL)
+    assert r.status_code == 200
+    assert r.json() == {"who": "Paul Somoye (paul@example.com)", "kind": "entra"}
+
+
+def test_principal_headers_ignored_when_sign_in_is_off(api):
+    assert api.client.get("/api/whoami", headers=PAUL).status_code == 401
+
+
+def test_key_callers_are_named_by_key(api):
+    assert api.client.get("/api/whoami", headers=api.headers).json() == {"who": "API key (primary)", "kind": "api-key"}
+    second = api.client.get("/api/whoami", headers={"X-API-Key": "test-key-2"}).json()
+    assert second["who"] == "API key (secondary)"
+
+
+def test_access_is_recorded_and_listed(api, monkeypatch):
+    monkeypatch.setenv("ENTRA_SIGNIN", "true")
+    api.client.get("/api/alerts", headers=PAUL)
+    api.client.get("/api/alerts", headers=PAUL)
+    api.client.get("/api/alerts", headers=api.headers)
+    r = api.client.get("/api/access?days=1", headers=PAUL)
+    assert r.status_code == 200
+    users = {u["who"]: u for u in r.json()["users"]}
+    paul = users["Paul Somoye (paul@example.com)"]
+    assert paul["kind"] == "entra" and paul["calls"] >= 2
+    assert paul["last_seen"].endswith("+01:00")
+    assert users["API key (primary)"]["calls"] == 1
+    assert api.client.get("/api/access?days=8", headers=PAUL).status_code == 422
+
+
+def test_unauthenticated_call_is_not_recorded(api):
+    api.client.get("/api/alerts")
+    assert api.access.rows == {}
+
+
+def test_docs_send_you_to_microsoft_sign_in(api, monkeypatch):
+    monkeypatch.setenv("ENTRA_SIGNIN", "true")
+    monkeypatch.setenv("DOCS_PASSWORD", "ignored-when-entra-is-on")
+    r = api.client.get("/docs", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/.auth/login/aad?post_login_redirect_uri=/docs"
+    assert api.client.get("/openapi.json").status_code == 401
+    assert api.client.get("/docs", headers=PAUL).status_code == 200
+    assert api.client.get("/openapi.json", headers=PAUL).status_code == 200

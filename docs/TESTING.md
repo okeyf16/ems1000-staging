@@ -54,9 +54,12 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 | S-27 | Key required | `GET /api/devices/<id>/state` without a key, then with one (on `/docs`: **Authorize**) | 401, then 200 |
 | S-28 | New state shape | `GET /api/devices/<id>/state` | `source: stored`, `readings`/`status`/`link`, `received_at` ending `+01:00`, `soc_pct`, `load_pct` |
 | S-29 | Live state | Device running; `GET …/state?live=true`; also the old `/live` | `source: device`, `age_s` 0, same shape; `/live` marked deprecated in `/docs` |
-| S-51 | Docs ask for a login | Open `<api>/docs` in a private browser window | Browser sign-in prompt; **Cancel** gives "Sign in to see the API docs." (401) |
-| S-52 | Docs login works | Sign in with output `docs_login` | Swagger page loads; `/redoc` and `/openapi.json` load too |
-| S-53 | Docs login isn't an API key | On `/docs`, without **Authorize**, run `GET /api/alerts` | 401 "Missing or invalid API key"; with **Authorize** (API key) 200 |
+| S-56 | Docs need Microsoft sign-in | Open `<api>/docs` in a private browser window | Redirect to the Microsoft login for your tenant |
+| S-57 | Sign-in works, no key needed | Sign in with your work account; on `/docs` run `GET /api/whoami`, then `GET /api/alerts`, without **Authorize** | `{"who": "<your name> (<your e-mail>)", "kind": "entra"}`; alerts 200 |
+| S-58 | Guest can sign in | Paul opens `/docs` and signs in with his own account | Same as S-57 with his name |
+| S-59 | Machines still use the key | Simulator panel cloud view, or `curl -H "X-API-Key: …" <api>/api/whoami` | Works; `who` is "API key (primary)" |
+| S-60 | No sign-in, no key | `curl <api>/api/alerts` | 401 "…or sign in with Microsoft at /docs" |
+| S-61 | Who's calling | After S-57–S-59, `GET /api/access` (and the panel's **API users today**) | Lists you, Paul and the API key with call counts and last seen in WAT (can lag a minute) |
 
 ## Alerts (after PR 1 and the API change)
 

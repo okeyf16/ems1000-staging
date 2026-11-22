@@ -104,3 +104,9 @@ variable "iothub_quota_alert_percents" {
     error_message = "Use percentages between 1 and 99."
   }
 }
+
+variable "api_require_role_assignment" {
+  type        = bool
+  description = "true: only people assigned the 'EMS API user' role can sign in to the API; false: anyone in the tenant"
+  default     = false
+}

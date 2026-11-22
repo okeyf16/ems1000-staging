@@ -70,8 +70,12 @@ def api(monkeypatch):
     monkeypatch.setattr(main, "history_client", history)
     monkeypatch.setattr(main, "alerts_client", alerts)
     monkeypatch.setattr(main, "iot_registry_manager", registry)
+    access_table = FakeTable()
+    from access import AccessRecorder
+    monkeypatch.setattr(main, "recorder", AccessRecorder(access_table, flush_s=0))
+    monkeypatch.delenv("ENTRA_SIGNIN", raising=False)
     client = TestClient(main.app)
-    return SimpleNamespace(client=client, state=state, history=history, alerts=alerts,
+    return SimpleNamespace(client=client, state=state, history=history, alerts=alerts, access=access_table,
                            registry=registry, main=main, headers={"X-API-Key": KEY})
 
 
