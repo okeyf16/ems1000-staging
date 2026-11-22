@@ -42,7 +42,7 @@ resource "azurerm_linux_web_app" "web_app" {
     # headers only with this set; the secret is read by App Service, not by the app
     "ENTRA_SIGNIN"                             = "true"
     "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" = var.entra_client_secret
-    "IOTHUB_CONNECTION_STRING"              = "HostName=iot-${var.app_name}-${var.env_prefix}.azure-devices.net;SharedAccessKeyName=iothubowner;SharedAccessKey=${var.iothub_owner_key}"
+    "IOTHUB_CONNECTION_STRING"              = "HostName=iot-${var.app_name}-${var.env_prefix}.azure-devices.net;SharedAccessKeyName=${var.iothub_policy_name};SharedAccessKey=${var.iothub_policy_key}"
   }
 
   # Microsoft sign-in for people in the tenant. Anonymous requests still reach the app, which

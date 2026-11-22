@@ -41,9 +41,14 @@ variable "app_insights_connection_string" {
   sensitive   = true
 }
 
-variable "iothub_owner_key" {
+variable "iothub_policy_name" {
   type        = string
-  description = "IoT Hub iothubowner primary key for invoking start/stop Direct Methods."
+  description = "IoT Hub access policy for the API (registry read/write + service connect)"
+}
+
+variable "iothub_policy_key" {
+  type        = string
+  description = "Primary key of that policy (twins, direct methods)"
   sensitive   = true
 }
 

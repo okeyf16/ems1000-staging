@@ -155,7 +155,8 @@ by a private channel, never in a repo, issue or PR. For the simulator panel's ow
 | Key | How | After |
 |---|---|---|
 | A device's key | `az iot hub device-identity renew-key --hub-name <hub> --device-id <id> --key-type primary` | Re-provision the device with the new connection string |
-| `iothubowner` (used by the Function and the API) | IoT Hub → **Shared access policies** → `iothubowner` → regenerate the primary key | Run an HCP Terraform plan and apply: it rewrites both apps' settings from the new key |
+| `ems-api` / `ems-function` (API / Function hub access) | IoT Hub → **Shared access policies** → the policy → regenerate the primary key, or replace the `azurerm_iothub_shared_access_policy` in an HCP run | Plan and apply: it rewrites that app's settings from the new key |
+| `iothubowner` (admins only, used by no app) | IoT Hub → **Shared access policies** → `iothubowner` → regenerate | Nothing else to change |
 | Storage account key | Storage account → **Access keys** → rotate key 1 | Plan and apply, as above |
 | Automation service principal | Create a new client secret | Update `AZURE_CREDENTIALS` in GitHub and `ARM_CLIENT_SECRET` in HCP Terraform |
 | API keys | HCP Terraform → new run → replace `random_password.api_key["secondary"]`; move clients to it; later replace `primary` the same way | Clients keep working on the other key throughout. Read keys from the sensitive output `api_keys` or Web App → **Environment variables** → `API_KEYS` |
@@ -232,7 +233,7 @@ cut) after about 1.5 × the keep-alive, so that time adds to `offline_grace_minu
 | 3 | The two alert rules have no action group | They fire in the portal but notify nobody | Add an `azurerm_monitor_action_group` (email or push) and attach it to both rules | **Fixed:** action group `ag-<app>-<env>` calls the API's alerts webhook; alerts land in the `Alerts` table (shown once the API and panel changes ship) |
 | 4 | The missing-telemetry alert counts a custom event `DeviceTelemetry` that the Function doesn't emit | The alert can't work as intended (it may fire constantly or never) | Base it on `traces` from `telemetry_ingest`, or have the Function emit that event per message | **Fixed:** rebuilt on the Function's per-message log line; one alert per silent device, auto-resolves |
 | 5 | `device_lifecycle_trigger` (Event Grid) has no Event Grid subscription in Terraform | It never runs, so `connection_status` in `DeviceState` is never set. Connection state is available from the twin (`GET /twin`) | Add the Event Grid system topic and subscription for IoT Hub connect/disconnect events, or remove the trigger | **Fixed:** system topic `egst-iothub-<app>-<env>` and subscription `device-lifecycle-to-function`; `/state` shows `connection_status`; Device offline alert after a grace period |
-| 6 | The Function and the API both use the `iothubowner` policy (full rights) | A leaked setting gives full control of the hub | Separate policies: the API with *service connect* + *registry read/write*, the Function with *service connect* only | Open |
+| 6 | The Function and the API both use the `iothubowner` policy (full rights) | A leaked setting gives full control of the hub | Separate policies: the API with *service connect* + *registry read/write*, the Function with *service connect* only | **Fixed:** policies `ems-api` and `ems-function`; next step is managed identities (no keys) |
 
 Smaller tidy-ups: the `scaffold..yml` workflow was a one-off and can be removed; some Terraform
 comments carry leftover `[cite: n]` markers. (The Function's duplicate `DeviceState` client

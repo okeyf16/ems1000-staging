@@ -72,7 +72,8 @@ module "function_app" {
   # Inject IoT Hub routing credentials directly into the Function App
   iothub_events_endpoint = module.iothub.eventhub_compatible_endpoint
   iothub_events_path     = module.iothub.eventhub_compatible_path
-  iothub_owner_key       = module.iothub.iothub_owner_primary_key
+  iothub_policy_name     = module.iothub.function_policy_name
+  iothub_policy_key      = module.iothub.function_policy_primary_key
   tags                   = azurerm_resource_group.rg.tags
 
   # Per-message telemetry history
@@ -135,7 +136,8 @@ module "app_service" {
   app_service_sku                   = "F1"
   storage_primary_connection_string = module.storage.primary_connection_string
   app_insights_connection_string    = module.observability.app_insights_connection_string
-  iothub_owner_key                  = module.iothub.iothub_owner_primary_key
+  iothub_policy_name                = module.iothub.api_policy_name
+  iothub_policy_key                 = module.iothub.api_policy_primary_key
   log_analytics_workspace_id        = module.observability.log_analytics_workspace_id
   tags                              = azurerm_resource_group.rg.tags
   history_table_name                = module.storage.telemetry_table_name

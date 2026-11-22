@@ -81,3 +81,24 @@ resource "azurerm_iothub_route" "telemetry_to_archive" {
   endpoint_names = [azurerm_iothub_endpoint_storage_container.telemetry_archive.name]
   enabled        = true
 }
+
+# ---- Access policies (least privilege) -------------------------------------------------
+# API: device registry and twins (registry read/write) plus direct methods, twin updates and
+# cloud-to-device calls (service connect). It never connects as a device.
+resource "azurerm_iothub_shared_access_policy" "api" {
+  name                = "ems-api"
+  resource_group_name = var.resource_group_name
+  iothub_name         = azurerm_iothub.iothub.name
+  registry_read       = true
+  registry_write      = true
+  service_connect     = true
+}
+
+# Function: reads device-to-cloud messages from the built-in Event Hub-compatible endpoint,
+# which needs service connect only.
+resource "azurerm_iothub_shared_access_policy" "function" {
+  name                = "ems-function"
+  resource_group_name = var.resource_group_name
+  iothub_name         = azurerm_iothub.iothub.name
+  service_connect     = true
+}

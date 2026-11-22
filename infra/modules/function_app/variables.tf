@@ -8,7 +8,11 @@ variable "storage_primary_connection_string" { type = string }
 variable "app_insights_connection_string" { type = string }
 variable "iothub_events_endpoint" { type = string }
 variable "iothub_events_path" { type = string }
-variable "iothub_owner_key" { type = string }
+variable "iothub_policy_name" { type = string } # service connect only
+variable "iothub_policy_key" {
+  type      = string
+  sensitive = true
+}
 variable "tags" { type = map(string) }
 
 variable "history_table_name" { type = string }

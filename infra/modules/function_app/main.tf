@@ -33,7 +33,7 @@ resource "azurerm_linux_function_app" "function_app" {
     "PYTHON_ENABLE_WORKER_EXTENSIONS" = "1"
 
     # Construct the Event Hub-compatible connection string for the IoT Hub trigger
-    "IOTHUB_EVENTS_CONNECTION_STRING" = "Endpoint=${var.iothub_events_endpoint};SharedAccessKeyName=iothubowner;SharedAccessKey=${var.iothub_owner_key};EntityPath=${var.iothub_events_path}"
+    "IOTHUB_EVENTS_CONNECTION_STRING" = "Endpoint=${var.iothub_events_endpoint};SharedAccessKeyName=${var.iothub_policy_name};SharedAccessKey=${var.iothub_policy_key};EntityPath=${var.iothub_events_path}"
 
     # Event Hub-compatible name of the built-in endpoint; the trigger reads it as
     # event_hub_name="%IOTHUB_EVENTS_PATH%" so it always matches the EntityPath above
