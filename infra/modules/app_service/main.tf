@@ -37,9 +37,32 @@ resource "azurerm_linux_web_app" "web_app" {
     "ALERTS_TABLE_NAME"                     = var.alerts_table_name
     "ALERT_WEBHOOK_TOKEN"                   = var.alert_webhook_token
     "API_KEYS"                              = join(",", var.api_keys)
-    "DOCS_USERNAME"                         = var.docs_username
-    "DOCS_PASSWORD"                         = var.docs_password
+    "ACCESS_TABLE_NAME"                     = var.access_table_name
+    # Microsoft sign-in (App Service authentication): the app trusts the signed-in-person
+    # headers only with this set; the secret is read by App Service, not by the app
+    "ENTRA_SIGNIN"                             = "true"
+    "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET" = var.entra_client_secret
     "IOTHUB_CONNECTION_STRING"              = "HostName=iot-${var.app_name}-${var.env_prefix}.azure-devices.net;SharedAccessKeyName=iothubowner;SharedAccessKey=${var.iothub_owner_key}"
+  }
+
+  # Microsoft sign-in for people in the tenant. Anonymous requests still reach the app, which
+  # accepts either a signed-in person (docs, Swagger "Try it out") or an X-API-Key (panel,
+  # mobile app). /.auth/login/aad starts sign-in; /.auth/logout signs out.
+  auth_settings_v2 {
+    auth_enabled           = true
+    require_authentication = false
+    unauthenticated_action = "AllowAnonymous"
+    default_provider       = "azureactivedirectory"
+
+    login {
+      token_store_enabled = true
+    }
+
+    active_directory_v2 {
+      client_id                  = var.entra_client_id
+      tenant_auth_endpoint       = "https://login.microsoftonline.com/${var.entra_tenant_id}/v2.0"
+      client_secret_setting_name = "MICROSOFT_PROVIDER_AUTHENTICATION_SECRET"
+    }
   }
 }
 

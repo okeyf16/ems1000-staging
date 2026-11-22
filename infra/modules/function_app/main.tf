@@ -49,6 +49,7 @@ resource "azurerm_linux_function_app" "function_app" {
     "OFFLINE_PENDING_TABLE_NAME" = var.offline_pending_table_name
     "OFFLINE_GRACE_MINUTES"      = tostring(var.offline_grace_minutes)
     "ALERTS_RETENTION_DAYS"      = tostring(var.alerts_retention_days)
+    "ACCESS_TABLE_NAME"          = var.access_table_name
   }
 
   lifecycle {

@@ -27,3 +27,7 @@ output "alerts_table_name" {
 output "offline_pending_table_name" {
   value = azurerm_storage_table.offline_pending.name
 }
+
+output "api_access_table_name" {
+  value = azurerm_storage_table.api_access.name
+}

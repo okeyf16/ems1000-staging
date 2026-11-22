@@ -41,6 +41,12 @@ resource "azurerm_storage_table" "alerts" {
   storage_account_name = azurerm_storage_account.ems_storage.name
 }
 
+# Who called the API: one row per caller (Microsoft account or API key) per UTC day.
+resource "azurerm_storage_table" "api_access" {
+  name                 = "ApiAccess"
+  storage_account_name = azurerm_storage_account.ems_storage.name
+}
+
 # Devices that disconnected (Event Grid) and haven't reconnected yet. The Function's
 # offline_check timer reads only this short list, so its cost doesn't grow with the fleet.
 resource "azurerm_storage_table" "offline_pending" {

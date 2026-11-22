@@ -84,6 +84,7 @@ module "function_app" {
   offline_pending_table_name = module.storage.offline_pending_table_name
   offline_grace_minutes      = var.offline_grace_minutes
   alerts_retention_days      = var.alerts_retention_days
+  access_table_name          = module.storage.api_access_table_name
 }
 
 # Device connect/disconnect events: IoT Hub -> Event Grid -> the Function's
@@ -141,14 +142,10 @@ module "app_service" {
   alerts_table_name                 = module.storage.alerts_table_name
   alert_webhook_token               = random_password.alert_webhook_token.result
   api_keys                          = [random_password.api_key["primary"].result, random_password.api_key["secondary"].result]
-  docs_password                     = random_password.docs_password.result
-}
-
-# Password for the API docs pages (shared with the team; stage 2 moves the docs to
-# Microsoft Entra sign-in). Rotate: HCP Terraform -> new run -> replace this resource.
-resource "random_password" "docs_password" {
-  length  = 24
-  special = false
+  access_table_name                 = module.storage.api_access_table_name
+  entra_client_id                   = azuread_application.api.client_id
+  entra_tenant_id                   = data.azuread_client_config.current.tenant_id
+  entra_client_secret               = azuread_application_password.api.value
 }
 
 # API keys for the X-API-Key header. Two, so one can be replaced while clients use the other:

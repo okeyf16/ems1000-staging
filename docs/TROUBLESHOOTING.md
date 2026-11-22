@@ -39,8 +39,12 @@ Check each hop in order: device → hub → route → Function → table.
 |---|---|---|
 | 401 "Missing or invalid API key" | No `X-API-Key` header, or an old key after rotation | Send a current key (output `api_keys`); on `/docs` use **Authorize** |
 | 503 "API keys are not configured" | `API_KEYS` missing on the Web App | Re-apply Terraform |
-| `/docs` keeps asking for a password | Wrong docs login, or the browser cached an old one after a rotation | Use output `docs_login`; try a private window |
-| `/docs` opens with no password | `DOCS_PASSWORD` not set yet (code deployed before the Terraform apply) | Apply in HCP Terraform; the app restarts with the setting |
+| Terraform apply fails creating `azuread_application.api` (Authorization_RequestDenied / insufficient privileges) | The HCP service principal lacks the Graph permission | RUNBOOK, *Microsoft sign-in → One-time setup*, then re-run the apply |
+| Microsoft login says the account isn't in the tenant (AADSTS50020) | Signing in with an account from another directory | Invite that person as a guest in your tenant first |
+| Login error AADSTS50011 (redirect URI mismatch) | The Web App's name changed | Re-apply: the redirect URI is built from the same name |
+| `/docs` opens without asking to sign in | You're already signed in (session cookie) | `/.auth/logout` to sign out |
+| Signed in, but calls give 401 | `ENTRA_SIGNIN` missing (apply not done yet) | Apply in HCP Terraform; meanwhile use **Authorize** with an API key |
+| `/api/access` misses the last minute | Counts are written at most once a minute per worker | Wait a minute |
 | First request takes ~30 s | F1 has no always-on: the app sleeps when idle | Expected on F1. B1 or above enables always-on automatically |
 | 503 from every endpoint | App failed to start (import error after a deploy) or the F1 daily CPU quota is used up | Web App → **Log stream**; App Service → **Quotas**. Redeploy or wait for the quota reset |
 | Alerts never appear in `GET /api/alerts` | Webhook token mismatch (401 in Web App logs), or the action group not attached | Re-apply Terraform (it sets the token on both sides); Monitor → **Alert rules** → check the action group |

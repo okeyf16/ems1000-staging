@@ -19,8 +19,7 @@ output "api_keys" {
   sensitive   = true
 }
 
-output "docs_login" {
-  description = "Username and password for the API docs pages (/docs, /redoc, /openapi.json)"
-  value       = { username = "ems-docs", password = random_password.docs_password.result }
-  sensitive   = true
+output "api_entra_client_id" {
+  description = "Client ID of the API's Entra app registration (Microsoft sign-in)"
+  value       = azuread_application.api.client_id
 }

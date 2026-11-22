@@ -19,3 +19,4 @@ variable "alerts_table_name" { type = string }
 variable "offline_pending_table_name" { type = string }
 variable "offline_grace_minutes" { type = number }
 variable "alerts_retention_days" { type = number }
+variable "access_table_name" { type = string }

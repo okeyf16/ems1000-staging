@@ -80,14 +80,23 @@ variable "api_keys" {
   sensitive   = true
 }
 
-variable "docs_username" {
+variable "access_table_name" {
   type        = string
-  description = "Username for the API docs pages (/docs, /redoc, /openapi.json)"
-  default     = "ems-docs"
+  description = "Table where the API counts calls per caller per day"
 }
 
-variable "docs_password" {
+variable "entra_client_id" {
   type        = string
-  description = "Password for the API docs pages; API calls still need X-API-Key"
+  description = "Client ID of the API's Entra app registration (Microsoft sign-in)"
+}
+
+variable "entra_tenant_id" {
+  type        = string
+  description = "Entra tenant whose accounts may sign in"
+}
+
+variable "entra_client_secret" {
+  type        = string
+  description = "Client secret App Service uses to complete Microsoft sign-in"
   sensitive   = true
 }
