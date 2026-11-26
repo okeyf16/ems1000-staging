@@ -60,6 +60,9 @@ The full device-side test plan (commands, faults, twin, panel) lives in the
 | S-59 | Machines still use the key | Simulator panel cloud view, or `curl -H "X-API-Key: …" <api>/api/whoami` | Works; `who` is "API key (primary)" |
 | S-60 | No sign-in, no key | `curl <api>/api/alerts` | 401 "…or sign in with Microsoft at /docs" |
 | S-61 | Who's calling | After S-57–S-59, `GET /api/access` (and the panel's **API users today**) | Lists you, Paul and the API key with call counts and last seen in WAT (can lag a minute) |
+| S-62 | Apps use their own hub policies | IoT Hub → **Shared access policies** | `ems-api` (Registry read, Registry write, Service connect) and `ems-function` (Service connect) exist |
+| S-63 | Pipeline still flows | Simulator sends; `GET …/state` | `enqueued_time` within a minute (the Function reads with `ems-function`) |
+| S-64 | Commands and twin still work | `POST …/command {"command":"get_status"}`; `GET …/twin` | 200 (the API uses `ems-api`) |
 
 ## Alerts (after PR 1 and the API change)
 
